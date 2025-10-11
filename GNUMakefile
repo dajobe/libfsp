@@ -42,7 +42,8 @@ PV=$(PACKAGE)-$(VERSION)
 TARBALL=$(PV).tar.gz
 
 LEX=flex
-BISON=bison
+# Use Homebrew bison on macOS if available, otherwise system bison
+BISON?=$(shell which /opt/homebrew/opt/bison/bin/bison 2>/dev/null || which bison)
 PYTHON3=python3
 
 LDFLAGS=$(DEBUG_FLAGS) $(SAN_FLAGS)
