@@ -26,14 +26,20 @@ test_lexer.l \
 test_parser.y \
 scripts/postprocess-flex.py \
 scripts/postprocess-bison.py \
-scripts/README.md
+scripts/README.md \
+tests/simple.txt \
+tests/simple.expected \
+tests/triple-quoted.txt \
+tests/triple-quoted.expected \
+tests/mixed.txt \
+tests/mixed.expected
 
 # Generated source files for test parser/lexer and config
 BUILT_SOURCES = fsp_config.h test_lexer.c test_lexer.h test_parser.c test_parser.h
 
 # Create fsp_config.h from config.h for standalone builds
 fsp_config.h: $(top_builddir)/config.h
-	@$(LN_S) $(top_builddir)/config.h fsp_config.h 2>/dev/null || cp $(top_builddir)/config.h fsp_config.h
+	@$(LN_S) $(top_builddir)/config.h fsp_config.h 2>/dev/null || cp -f $(top_builddir)/config.h fsp_config.h || true
 
 MAINTAINERCLEANFILES = test_lexer.c test_lexer.h \
 test_parser.c test_parser.h test_parser.output

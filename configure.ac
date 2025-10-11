@@ -246,7 +246,7 @@ AC_C_CONST
 AC_C_INLINE
 
 dnl Checks for library functions
-AC_CHECK_FUNCS([memmove memcpy])
+AC_CHECK_FUNCS([memmove memcpy strdup])
 
 AC_CONFIG_FILES([
   Makefile

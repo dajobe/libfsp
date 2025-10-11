@@ -33,7 +33,10 @@ GNUMakefile \
 AUTHORS ChangeLog COPYING COPYING.LIB LICENSE.txt LICENSE-2.0.txt \
 NOTICE NEWS configure.ac Makefile.am \
 test_lexer.l test_parser.y \
-$(FSPLIBSRCS) $(FSPLIBHDRS) fsp_test.c
+$(FSPLIBSRCS) $(FSPLIBHDRS) fsp_test.c \
+tests/simple.txt tests/simple.expected \
+tests/triple-quoted.txt tests/triple-quoted.expected \
+tests/mixed.txt tests/mixed.expected
 
 PACKAGE=libfsp
 VERSION=0.1.0
@@ -91,8 +94,11 @@ test_parser.o: test_parser.c fsp.h
 
 dist: $(FILES)
 	rm -rf $(PV) && \
-	mkdir $(PV) && \
+	mkdir -p $(PV)/tests && \
+	mkdir -p $(PV)/scripts && \
 	cp $(FILES) $(PV) && \
+	cp tests/*.txt tests/*.expected $(PV)/tests/ && \
+	cp scripts/*.py scripts/README.md $(PV)/scripts/ && \
 	tar cfz $(TARBALL) $(PV) && \
 	rm -rf $(PV)
 

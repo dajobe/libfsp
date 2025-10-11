@@ -35,6 +35,135 @@
 static int test_count = 0;
 static int test_failed = 0;
 
+/* Helper function to read file into memory */
+static char*
+read_file(const char *filename, size_t *length)
+{
+  FILE *fp;
+  char *content;
+  size_t file_size;
+  size_t bytes_read;
+  
+  fp = fopen(filename, "rb");
+  if(!fp)
+    return NULL;
+  
+  /* Get file size */
+  fseek(fp, 0, SEEK_END);
+  file_size = ftell(fp);
+  fseek(fp, 0, SEEK_SET);
+  
+  /* Allocate buffer */
+  content = (char*)malloc(file_size + 1);
+  if(!content) {
+    fclose(fp);
+    return NULL;
+  }
+  
+  /* Read content */
+  bytes_read = fread(content, 1, file_size, fp);
+  fclose(fp);
+  
+  if(bytes_read != file_size) {
+    free(content);
+    return NULL;
+  }
+  
+  content[file_size] = '\0';
+  if(length)
+    *length = file_size;
+  
+  return content;
+}
+
+/* Serialize AST to string for comparison */
+static char*
+serialize_ast(void)
+{
+  statement_node *stmt;
+  char *result;
+  size_t result_size;
+  size_t result_len;
+  
+  stmt = test_parser_get_statements();
+  
+  /* Start with reasonable buffer */
+  result_size = 1024;
+  result = (char*)malloc(result_size);
+  if(!result)
+    return NULL;
+  
+  result[0] = '\0';
+  result_len = 0;
+  
+  /* Serialize each statement */
+  while(stmt) {
+    char line[2048];
+    size_t line_len;
+    
+    if(stmt->type == STMT_PRINT) {
+      snprintf(line, sizeof(line), "PRINT: %s\n", stmt->value);
+    } else if(stmt->type == STMT_LET) {
+      snprintf(line, sizeof(line), "LET: %s = %s\n", stmt->identifier, stmt->value);
+    } else {
+      continue;
+    }
+    
+    line_len = strlen(line);
+    
+    /* Grow buffer if needed */
+    if(result_len + line_len + 1 > result_size) {
+      result_size = result_size * 2 + line_len;
+      result = (char*)realloc(result, result_size);
+      if(!result)
+        return NULL;
+    }
+    
+    strcpy(result + result_len, line);
+    result_len += line_len;
+    
+    stmt = stmt->next;
+  }
+  
+  return result;
+}
+
+/* Validate parsed output against expected output */
+static int
+validate_parse_result(const char *expected_file)
+{
+  char *expected_content;
+  char *actual_content;
+  int result;
+  
+  expected_content = read_file(expected_file, NULL);
+  if(!expected_content) {
+    fprintf(stderr, "Failed to read expected file: %s\n", expected_file);
+    return -1;
+  }
+  
+  actual_content = serialize_ast();
+  if(!actual_content) {
+    fprintf(stderr, "Failed to serialize AST\n");
+    free(expected_content);
+    return -1;
+  }
+  
+  /* Byte-for-byte comparison */
+  if(strcmp(actual_content, expected_content) == 0) {
+    result = 0;
+  } else {
+    fprintf(stderr, "  Output mismatch\n");
+    fprintf(stderr, "  Expected:\n%s", expected_content);
+    fprintf(stderr, "  Got:\n%s", actual_content);
+    result = -1;
+  }
+  
+  free(expected_content);
+  free(actual_content);
+  return result;
+}
+
 #define TEST(name) do { \
   test_count++; \
   fprintf(stderr, "Test %d: %s ... ", test_count, name); \
@@ -51,7 +180,8 @@ static int test_failed = 0;
 
 /* Test the parser with streaming chunks */
 static int
-test_streaming_parser(const char *input, size_t chunk_size)
+test_streaming_parser(const char *input, size_t chunk_size,
+                      const char *expected_file)
 {
   fsp_context *ctx;
   yyscan_t scanner;
@@ -59,6 +189,10 @@ test_streaming_parser(const char *input, size_t chunk_size)
   int status;
   size_t pos = 0;
   size_t input_len = strlen(input);
+  int result;
+
+  /* Reset parser state before test */
+  test_parser_reset();
 
   /* Create FSP context */
   ctx = fsp_create();
@@ -149,7 +283,37 @@ done:
   test_lexer_lex_destroy(scanner);
   fsp_destroy(ctx);
 
-  return (status == 0) ? 0 : -1;
+  if(status != 0)
+    return -1;
+
+  /* Validate result if expected file is provided */
+  if(expected_file) {
+    result = validate_parse_result(expected_file);
+    return result;
+  }
+
+  return 0;
+}
+
+/* Test parser with input from file */
+static int
+test_file_parser(const char *input_file, const char *expected_file,
+                 size_t chunk_size)
+{
+  char *input;
+  size_t length;
+  int result;
+  
+  input = read_file(input_file, &length);
+  if(!input) {
+    fprintf(stderr, "Failed to read input file: %s\n", input_file);
+    return -1;
+  }
+  
+  result = test_streaming_parser(input, chunk_size, expected_file);
+  free(input);
+  
+  return result;
 }
 
 int main(int argc, char **argv)
@@ -158,8 +322,6 @@ int main(int argc, char **argv)
   const char *test_data = "Test data chunk";
   const char *chunk1;
   const char *chunk2;
-  const char *simple_input;
-  const char *long_string_input;
   size_t test_data_len;
   size_t expected;
   size_t large_size;
@@ -308,29 +470,35 @@ int main(int argc, char **argv)
     free(large_data);
   }
 
-  /* Test 10: Simple parse with large chunks */
-  TEST("Simple parse (large chunks)");
+  /* Test 10: Simple parse from file */
+  TEST("Simple parse from file (tests/simple.txt)");
   fsp_destroy(ctx);
-  simple_input = "print \"hello\"; let x = 42;";
-  if(test_streaming_parser(simple_input, 1024) < 0) {
+  if(test_file_parser("tests/simple.txt", "tests/simple.expected", 1024) < 0) {
     FAIL("Simple parse failed");
   } else {
     PASS();
   }
 
   /* Test 11: Parse with small chunks (streaming stress test) */
-  TEST("Streaming parse (small chunks)");
-  if(test_streaming_parser(simple_input, 5) < 0) {
+  TEST("Streaming parse with small chunks (tests/simple.txt)");
+  if(test_file_parser("tests/simple.txt", "tests/simple.expected", 5) < 0) {
     FAIL("Streaming parse with small chunks failed");
   } else {
     PASS();
   }
 
-  /* Test 12: Parse with triple-quoted string */
-  TEST("Triple-quoted string parse");
-  long_string_input = "print \"\"\"This is a\nmulti-line\nstring\"\"\";";
-  if(test_streaming_parser(long_string_input, 10) < 0) {
+  /* Test 12: Parse triple-quoted string from file */
+  TEST("Triple-quoted string parse (tests/triple-quoted.txt)");
+  if(test_file_parser("tests/triple-quoted.txt", "tests/triple-quoted.expected", 10) < 0) {
     FAIL("Triple-quoted string parse failed");
+  } else {
+    PASS();
+  }
+
+  /* Test 13: Mixed statements from file */
+  TEST("Mixed statements parse (tests/mixed.txt)");
+  if(test_file_parser("tests/mixed.txt", "tests/mixed.expected", 20) < 0) {
+    FAIL("Mixed statements parse failed");
   } else {
     PASS();
   }

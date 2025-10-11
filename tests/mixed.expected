@@ -1,0 +1,4 @@
+PRINT: hello
+LET: x = 42
+LET: name = world
+PRINT: name

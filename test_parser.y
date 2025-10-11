@@ -26,11 +26,31 @@
  * the licenses in COPYING.LIB, COPYING and LICENSE-2.0.txt respectively.
  */
 
-%{
+%code requires {
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
 
+/* AST node structures for validation */
+typedef enum statement_type_e {
+  STMT_PRINT,
+  STMT_LET
+} statement_type;
+
+typedef struct statement_node_s {
+  statement_type type;
+  char *identifier;     /* For LET statements */
+  char *value;          /* Expression value */
+  struct statement_node_s *next;
+} statement_node;
+
+/* Public API for accessing parsed statements */
+statement_node* test_parser_get_statements(void);
+void test_parser_free_statements(void);
+void test_parser_reset(void);
+}
+
+%{
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -43,12 +63,18 @@
 #undef yylex
 #include <test_lexer.h>
 
+/* Add a statement to the parse tree */
+static void add_statement(statement_type type, const char *identifier, const char *value);
+
 /* Prototypes */
 static void test_parser_internal_error(const char *msg);
-static void test_parser_print_result(const char *msg);
 
 /* Prototype for yyerror (will be #defined to test_parser_error) */
 void yyerror(fsp_context* fsp_ctx, void *scanner, const char *msg);
+
+/* Global list of parsed statements for validation */
+static statement_node *parsed_statements = NULL;
+static statement_node *last_statement = NULL;
 
 /* Internal error function */
 static void
@@ -57,11 +83,58 @@ test_parser_internal_error(const char *msg)
   fprintf(stderr, "Parse error: %s\n", msg);
 }
 
-/* Result printer */
+/* Add a statement to the parse tree */
 static void
-test_parser_print_result(const char *msg)
+add_statement(statement_type type, const char *identifier, const char *value)
 {
-  printf("Result: %s\n", msg);
+  statement_node *node;
+  
+  node = (statement_node*)malloc(sizeof(statement_node));
+  if(!node)
+    return;
+  
+  node->type = type;
+  node->identifier = identifier ? strdup(identifier) : NULL;
+  node->value = value ? strdup(value) : NULL;
+  node->next = NULL;
+  
+  if(!parsed_statements) {
+    parsed_statements = node;
+    last_statement = node;
+  } else {
+    last_statement->next = node;
+    last_statement = node;
+  }
+}
+
+/* Get the parsed statements list */
+statement_node*
+test_parser_get_statements(void)
+{
+  return parsed_statements;
+}
+
+/* Free all parsed statements */
+void
+test_parser_free_statements(void)
+{
+  statement_node *node = parsed_statements;
+  while(node) {
+    statement_node *next = node->next;
+    free(node->identifier);
+    free(node->value);
+    free(node);
+    node = next;
+  }
+  parsed_statements = NULL;
+  last_statement = NULL;
+}
+
+/* Reset parser state for a new parse */
+void
+test_parser_reset(void)
+{
+  test_parser_free_statements();
 }
 
 /* Note: yyerror is #defined to test_parser_error by Bison,
@@ -129,13 +202,11 @@ program:
 
 statement:
     PRINT expr SEMICOLON {
-      test_parser_print_result($2);
+      add_statement(STMT_PRINT, NULL, $2);
       free($2);
     }
   | LET IDENTIFIER EQUALS expr SEMICOLON {
-      char buf[1024];
-      snprintf(buf, sizeof(buf), "LET %s = %s", $2, $4);
-      test_parser_print_result(buf);
+      add_statement(STMT_LET, $2, $4);
       free($2);
       free($4);
     }
