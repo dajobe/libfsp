@@ -45,6 +45,32 @@ These test components prove the streaming approach works but are **NOT
 delivered**. Host projects like Raptor and Rasqal have their own lexer/parser
 implementations.
 
+### Test Language
+
+The test lexer and parser implement a simple toy language designed to exercise
+streaming parser capabilities, particularly for multi-line tokens:
+
+**Grammar:**
+```
+program ::= statement*
+statement ::= PRINT expression ';'
+           | LET identifier '=' expression ';'
+expression ::= string | identifier | integer
+```
+
+**Example inputs:**
+```c
+print "hello";
+let x = 42;
+print """This is a
+multi-line
+string""";
+```
+
+The language includes triple-quoted strings (`"""..."""`) which are specifically
+designed to test streaming across chunk boundaries, since they can span multiple
+lines and may be split mid-token when fed to the parser in small chunks.
+
 **Note:** The test files use the delivered `postprocess-flex.py` and
 `postprocess-bison.py` scripts to build the test lexer and parser. Host projects
 can use these same scripts with their own Flex/Bison files.

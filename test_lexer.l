@@ -2,6 +2,12 @@
  *
  * test_lexer.l - libfsp test lexer - demonstrates streaming with Flex
  *
+ * Lexer for a simple toy language with:
+ * - Keywords: print, let
+ * - String literals (single and triple-quoted for multi-line)
+ * - Identifiers and integers
+ * - Triple-quoted strings test streaming across chunk boundaries
+ *
  * Copyright (C) 2025, Dave Beckett http://www.dajobe.org/
  * 
  * This package is Free Software

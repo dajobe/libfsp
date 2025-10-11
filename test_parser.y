@@ -2,6 +2,13 @@
  *
  * test_parser.y - libfsp test parser - demonstrates push parser with streaming
  *
+ * Parser for a simple toy language:
+ *   program ::= statement*
+ *   statement ::= PRINT expression ';' | LET identifier '=' expression ';'
+ *   expression ::= string | identifier | integer
+ *
+ * Example: print "hello"; let x = 42;
+ *
  * Copyright (C) 2025, Dave Beckett http://www.dajobe.org/
  * 
  * This package is Free Software
