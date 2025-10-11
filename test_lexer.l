@@ -64,6 +64,7 @@
 #include <stdlib.h>
 
 #include "fsp.h"
+#include "fsp_internal.h"
 #include "test_parser.h"
 
 #define YYSTYPE TEST_PARSER_STYPE
@@ -138,7 +139,7 @@ WS       [ \t\r\n]+
 
 <LONG_STRING>.|\n {
     /* Accumulate characters in long string */
-    char *new_str = malloc(strlen(yylval->string) + 2);
+    char *new_str = FSP_MALLOC(char*, strlen(yylval->string) + 2);
     if(!new_str)
       return ERROR;
     strcpy(new_str, yylval->string);
@@ -171,7 +172,7 @@ WS       [ \t\r\n]+
 static char *
 test_copy_string(const char *text, size_t len)
 {
-  char *result = malloc(len + 1);
+  char *result = FSP_MALLOC(char*, len + 1);
   if(!result)
     return NULL;
   memcpy(result, text, len);

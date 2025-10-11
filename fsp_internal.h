@@ -29,6 +29,12 @@
 
 #include "fsp.h"
 
+/* Memory allocation macros with type casts for C++ compatibility */
+#define FSP_MALLOC(type, size) (type)malloc(size)
+#define FSP_CALLOC(type, nmemb, size) (type)calloc(nmemb, size)
+#define FSP_REALLOC(type, ptr, size) (type)realloc(ptr, size)
+#define FSP_FREE(type, ptr) free((void*)ptr)
+
 struct fsp_context_s {
   /* Bison push parser state (to be set by host) */
   void *parser_state;              /* yypstate* */
