@@ -19,7 +19,7 @@ The delivered library consists of:
 
 - **`fsp.c`** - Core buffer management implementation
 - **`fsp.h`** - Public API header
-- **`fsp_internal.h`** - Internal structures (for inline/macro use)
+- **`fsp_internal.h`** - Internal structures and C++ compatibility macros
 
 ### Build Helper Scripts (3 files)
 
@@ -27,10 +27,10 @@ The delivered library consists of:
 - **`scripts/postprocess-bison.py`** - Configurable post-processor for Bison output
 - **`scripts/README.md`** - Documentation for the postprocess scripts
 
-The core library provides pure C buffer management primitives. The postprocess 
-scripts are **essential utilities** that host projects use with their own 
-Flex/Bison parsers to ensure the generated code compiles **warning-free** at 
-high warning levels (including `-Wall -Wextra -Werror`). They fix warnings, 
+The core library provides pure C buffer management primitives. The postprocess
+scripts are **essential utilities** that host projects use with their own
+Flex/Bison parsers to ensure the generated code compiles **warning-free** at
+high warning levels (including `-Wall -Wextra -Werror`). They fix warnings,
 compatibility issues, and code quality problems in generated code.
 
 ## What's for Testing Only
@@ -58,6 +58,8 @@ can use these same scripts with their own Flex/Bison files.
 - Reentrant and thread-safe
 - Zero-copy where possible
 - Bounded memory usage for arbitrarily large files
+- Minimal dependencies: Only standard C library (malloc, free, memcpy, memmove)
+- C++ compatible: Compiles cleanly with C and C++ compilers
 
 ## How It Works
 
@@ -76,8 +78,9 @@ libfsp's `fsp_read_input()` from its YY_INPUT macro.
 
 ### Core Library
 
-- C compiler (C99 or later)
-- Standard C library
+- C compiler (C99 or later) or C++ compiler
+- Standard C library (stdlib.h, string.h)
+- No external dependencies beyond libc
 
 ### Testing (optional, only needed for `make check`)
 
@@ -90,18 +93,22 @@ libfsp's `fsp_read_input()` from its YY_INPUT macro.
 **The project maintains zero-warning compilation as a fundamental requirement:**
 
 - Generated lexer/parser code **MUST** compile without warnings at high warning levels
-- In maintainer mode, the build system automatically detects and enables **all** warning 
+- Tested and verified with: gcc, clang, and g++ (C++ mode)
+- In maintainer mode, the build system automatically detects and enables **all** warning
   flags supported by your compiler (40+ flags tested, typically 30+ enabled)
-- Flags include: `-std=c11 -Wall -Wc++-compat -Wextra -Wpedantic -Wunused 
-  -Waggregate-return -Wbad-function-cast -Wcast-align -Wdeclaration-after-statement` 
+- Flags include: `-std=c11 -Wall -Wc++-compat -Wextra -Wpedantic -Wunused
+  -Waggregate-return -Wbad-function-cast -Wcast-align -Wdeclaration-after-statement`
   and many more
-- The `postprocess-flex.py` and `postprocess-bison.py` scripts exist specifically to 
+- The `postprocess-flex.py` and `postprocess-bison.py` scripts exist specifically to
   ensure generated code meets this standard
-- A "working state" for the project means `make check` completes with **zero warnings** 
+- C++ compatibility macros (`FSP_MALLOC`, etc.) in `fsp_internal.h` ensure clean
+  compilation with C++ compilers
+- A "working state" for the project means `make check` completes with **zero warnings**
   from the test lexer and parser compilation
 
 **Maintainer Mode vs. Normal Mode:**
-- **Maintainer mode** (`--enable-maintainer-mode`): Enables maximum warnings, regenerates 
+
+- **Maintainer mode** (`--enable-maintainer-mode`): Enables maximum warnings, regenerates
   lexer/parser from `.l`/`.y` files, runs postprocess scripts
 - **Normal mode**: Uses moderate warnings, expects pre-generated lexer/parser files
 
@@ -260,10 +267,11 @@ the test lexer/parser from `.l` and `.y` files. Otherwise, pre-generated
 files can be used (if distributed).
 
 **Success Criteria:** `make check` must complete with:
+
 - Zero compilation warnings from test_lexer.c and test_parser.c
 - All tests passing
 
-This validates both the core library functionality and the postprocess scripts' 
+This validates both the core library functionality and the postprocess scripts'
 ability to produce warning-free generated code.
 
 ## Project Structure
@@ -272,7 +280,7 @@ ability to produce warning-free generated code.
 libfsp/
 ├── fsp.c                       # Core implementation [DELIVERED]
 ├── fsp.h                       # Public API [DELIVERED]
-├── fsp_internal.h              # Internal structures [DELIVERED]
+├── fsp_internal.h              # Internal structures and C++ macros [DELIVERED]
 │
 ├── scripts/
 │   ├── postprocess-flex.py    # Flex postprocessor [DELIVERED]
