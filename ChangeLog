@@ -1,0 +1,9 @@
+2025-01-11  Dave Beckett  <dave@dajobe.org>
+
+	* Initial libfsp implementation
+	- Core buffer management functions
+	- fsp_create, fsp_destroy, fsp_parse_chunk
+	- fsp_read_input for YY_INPUT integration
+	- Buffer management: append, compact, available
+	- Test suite with comprehensive coverage
+

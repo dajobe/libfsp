@@ -1,0 +1,111 @@
+#CC=clang
+#SAN_FLAGS=-fsanitize=address -O1 -fno-omit-frame-pointer
+
+# Strict warning flags - generated code must compile warning-free
+# For maximum warnings in development, uncomment the full set:
+#WARN_FLAGS=-Wno-nullability-completeness -std=c11 -Wall -Wc++-compat -Wextra -Wpedantic -Wunused -Waggregate-return -Wbad-function-cast -Wcast-align -Wdeclaration-after-statement -Wdisabled-optimization -Wdiv-by-zero -Wendif-labels -Werror-implicit-function-declaration -Wfloat-equal -Wformat=2 -Wframe-larger-than=4096 -Winit-self -Winline -Wmissing-declarations -Wmissing-format-attribute -Wmissing-noreturn -Wmissing-prototypes -Wnested-externs -Wold-style-definition -Wpacked -Wpointer-arith -Wredundant-decls -Wshadow -Wsign-compare -Wstrict-overflow -Wstrict-prototypes -Wswitch-enum -Wunreachable-code -Wwrite-strings -Wno-missing-field-initializers -Wno-system-headers -Wno-unused-parameter -Wswitch-bool -Wlogical-not-parentheses -Wsizeof-array-argument -Wshorten-64-to-32
+# Or use a more moderate set (configure.ac auto-detects supported flags):
+WARN_FLAGS=-Wall -Wextra -Wpedantic
+# Uncomment to treat warnings as errors (recommended for development)
+#WARN_FLAGS+=-Werror
+
+DEBUG_FLAGS=-g3 $(WARN_FLAGS)
+
+FSPLIB=libfsp.a
+FSPLIBSRCS=fsp.c
+FSPLIBHDRS=fsp.h fsp_internal.h
+
+LIBS=$(FSPLIB)
+
+TESTSRCS=fsp_test.c test_lexer.c test_parser.c
+TESTS=fsp_test
+
+# Generated files from flex/bison
+GENERATED=test_lexer.c test_lexer.h test_parser.c test_parser.h test_parser.output
+
+CLEANFILES=$(TESTS) $(LIBS) \
+stamp-h1 \
+test_lexer.t \
+$(GENERATED)
+
+FILES=README.md \
+GNUMakefile \
+AUTHORS ChangeLog COPYING COPYING.LIB LICENSE.txt LICENSE-2.0.txt \
+NOTICE NEWS configure.ac Makefile.am \
+test_lexer.l test_parser.y \
+$(FSPLIBSRCS) $(FSPLIBHDRS) fsp_test.c
+
+PACKAGE=libfsp
+VERSION=0.1.0
+
+PV=$(PACKAGE)-$(VERSION)
+TARBALL=$(PV).tar.gz
+
+LEX=flex
+BISON=bison
+PYTHON3=python3
+
+LDFLAGS=$(DEBUG_FLAGS) $(SAN_FLAGS)
+CPPFLAGS=$(DEBUG_FLAGS) -I. -DHAVE_STDLIB_H -DHAVE_STRING_H
+CFLAGS=$(SAN_FLAGS)
+
+FSPLIBOBJS=$(FSPLIBSRCS:.c=.o)
+TESTOBJS=$(TESTSRCS:.c=.o)
+
+all: $(LIBS) $(TESTS)
+
+# Library deps
+fsp.c: fsp.h
+$(FSPLIBSRCS): fsp_internal.h
+
+$(FSPLIB): $(FSPLIBOBJS)
+	$(AR) rv $@ $?
+
+# Test lexer and parser generation with postprocess scripts
+test_lexer.c: test_lexer.l test_parser.c scripts/postprocess-flex.py
+	$(LEX) -o$@ $<
+	for file in test_lexer.c test_lexer.h; do \
+	  $(PYTHON3) scripts/postprocess-flex.py $$file > $$file.tmp || exit 1; \
+	  mv -f $$file.tmp $$file; \
+	done
+
+test_parser.c: test_parser.y scripts/postprocess-bison.py
+	$(BISON) -o $@ $<
+	$(PYTHON3) scripts/postprocess-bison.py $@
+
+test_parser.h: test_parser.c
+	@true
+
+test_lexer.h: test_lexer.c
+	@true
+
+# Test program
+fsp_test: $(TESTOBJS) $(FSPLIB)
+	$(CC) $(LDFLAGS) -o $@ $(TESTOBJS) $(FSPLIB)
+
+# Object dependencies
+fsp_test.o: fsp_test.c fsp.h test_parser.h test_lexer.h
+test_lexer.o: test_lexer.c test_parser.h fsp.h
+test_parser.o: test_parser.c fsp.h
+
+dist: $(FILES)
+	rm -rf $(PV) && \
+	mkdir $(PV) && \
+	cp $(FILES) $(PV) && \
+	tar cfz $(TARBALL) $(PV) && \
+	rm -rf $(PV)
+
+clean:
+	rm -f *.o *~ *.tar.gz $(CLEANFILES)
+
+check: $(TESTS)
+	@rc=0; \
+	for t in $(TESTS); do \
+	  echo "Running test $$t"; \
+	  ./$$t; \
+	  status=$$?; \
+	  if test $$status != 0; then \
+	    rc=1; \
+	  fi; \
+	done; \
+	exit $$rc

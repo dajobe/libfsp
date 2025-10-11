@@ -1,0 +1,8 @@
+libfsp 0.1.0 - 2025-01-11
+
+  * Initial release
+  * Streaming buffer management for Flex/Bison parsers
+  * Support for Bison push parser integration
+  * Flex YY_INPUT implementation
+  * Handles tokens split across chunk boundaries
+
