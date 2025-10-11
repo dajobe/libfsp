@@ -25,6 +25,7 @@
 #include <stdlib.h>
 
 #include "fsp.h"
+#include "fsp_internal.h"  /* For direct access to context internals in tests */
 #include "test_parser.h"
 
 /* Define YYSTYPE for lexer header */
@@ -252,9 +253,8 @@ test_streaming_parser(const char *input, size_t chunk_size,
       if(token == 0) {
         /* No more tokens available */
         if(is_end) {
-          /* EOF - push EOF token to parser */
-          status = test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
-          goto done;
+          /* Drain any remaining tokens before EOF */
+          break;
         }
         /* Need more data */
         break;
@@ -273,6 +273,25 @@ test_streaming_parser(const char *input, size_t chunk_size,
         goto done;
       }
     } while(1);
+  }
+
+  /* Signal EOF to FSP context - no more chunks coming */
+  ctx->more_chunks_expected = 0;
+
+  /* Drain any remaining tokens after all input has been fed */
+  while(1) {
+    TEST_PARSER_STYPE lval;
+    int token;
+
+    token = test_lexer_lex(&lval, scanner);
+    
+    if(token == 0 || token == ERROR)
+      break;
+
+    status = test_parser_push_parse(pstate, token, &lval, ctx, scanner);
+    
+    if(status != YYPUSH_MORE)
+      goto done;
   }
 
   /* Push final EOF */
@@ -501,6 +520,66 @@ int main(int argc, char **argv)
     FAIL("Mixed statements parse failed");
   } else {
     PASS();
+  }
+
+  /* Test 14: Empty input */
+  TEST("Empty input (tests/empty.txt)");
+  if(test_file_parser("tests/empty.txt", "tests/empty.expected", 1024) < 0) {
+    FAIL("Empty input failed");
+  } else {
+    PASS();
+  }
+
+  /* Test 15: Moderate long string (1KB) - realistic size */
+  TEST("Moderate long string parse (tests/long_string.txt)");
+  if(test_file_parser("tests/long_string.txt", "tests/long_string.expected", 512) < 0) {
+    FAIL("Moderate long string parse failed");
+  } else {
+    PASS();
+  }
+
+  /* Test 16: 4-byte chunks (small streaming) */
+  TEST("Small chunk streaming with 4-byte chunks (tests/mixed.txt)");
+  if(test_file_parser("tests/mixed.txt", "tests/mixed.expected", 4) < 0) {
+    FAIL("4-byte chunk streaming failed");
+  } else {
+    PASS();
+  }
+
+  /* Test 17: Malformed input - missing semicolon (should not crash) */
+  TEST("Malformed input - missing semicolon (tests/missing_semicolon.txt)");
+  {
+    char *input;
+    size_t length;
+    
+    input = read_file("tests/missing_semicolon.txt", &length);
+    if(input) {
+      /* Should handle error gracefully, not crash */
+      (void)test_streaming_parser(input, 1024, NULL);
+      free(input);
+      /* We expect this to fail parsing, but not crash */
+      PASS();
+    } else {
+      FAIL("Could not read test file");
+    }
+  }
+
+  /* Test 18: Malformed input - unterminated string (should not crash) */
+  TEST("Malformed input - unterminated string (tests/unterminated_string.txt)");
+  {
+    char *input;
+    size_t length;
+    
+    input = read_file("tests/unterminated_string.txt", &length);
+    if(input) {
+      /* Should handle error gracefully, not crash */
+      (void)test_streaming_parser(input, 1024, NULL);
+      free(input);
+      /* We expect this to fail parsing, but not crash */
+      PASS();
+    } else {
+      FAIL("Could not read test file");
+    }
   }
 
   /* Summary */

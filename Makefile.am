@@ -32,7 +32,21 @@ tests/simple.expected \
 tests/triple-quoted.txt \
 tests/triple-quoted.expected \
 tests/mixed.txt \
-tests/mixed.expected
+tests/mixed.expected \
+tests/empty.txt \
+tests/empty.expected \
+tests/long_string.txt \
+tests/long_string.expected \
+tests/missing_semicolon.txt \
+tests/unterminated_string.txt \
+fuzz_fsp_parse.c \
+dicts/fsp.dict \
+corpus/parse/1_basic.txt \
+corpus/parse/2_multiline.txt \
+corpus/parse/3_mixed.txt \
+corpus/parse/4_empty.txt \
+corpus/parse/5_single_char.txt \
+FUZZING.md
 
 # Generated source files for test parser/lexer and config
 BUILT_SOURCES = fsp_config.h test_lexer.c test_lexer.h test_parser.c test_parser.h

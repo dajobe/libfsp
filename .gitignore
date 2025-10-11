@@ -53,4 +53,9 @@ test_parser.c.bak
 *.swp
 .*.swp
 
+# Fuzzing
+fuzz_fsp_parse
+fuzz_fsp_parse.o
+artifacts/
+
 autogen.sh

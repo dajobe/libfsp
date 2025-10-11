@@ -1,0 +1,32 @@
+# Keywords
+"print"
+"let"
+
+# Operators
+"="
+";"
+
+# String delimiters
+"\""
+"\"\"\""
+
+# Common values
+"hello"
+"world"
+"42"
+"0"
+"x"
+"name"
+
+# Whitespace
+" "
+"\t"
+"\n"
+"\r\n"
+
+# Special cases
+""
+"NA"
+"null"
+"NULL"
+

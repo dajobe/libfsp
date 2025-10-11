@@ -36,7 +36,11 @@ test_lexer.l test_parser.y \
 $(FSPLIBSRCS) $(FSPLIBHDRS) fsp_test.c \
 tests/simple.txt tests/simple.expected \
 tests/triple-quoted.txt tests/triple-quoted.expected \
-tests/mixed.txt tests/mixed.expected
+tests/mixed.txt tests/mixed.expected \
+tests/empty.txt tests/empty.expected \
+tests/long_string.txt tests/long_string.expected \
+tests/missing_semicolon.txt tests/unterminated_string.txt \
+fuzz_fsp_parse.c dicts/fsp.dict FUZZING.md
 
 PACKAGE=libfsp
 VERSION=0.1.0
@@ -96,9 +100,14 @@ dist: $(FILES)
 	rm -rf $(PV) && \
 	mkdir -p $(PV)/tests && \
 	mkdir -p $(PV)/scripts && \
+	mkdir -p $(PV)/corpus/parse && \
+	mkdir -p $(PV)/dicts && \
 	cp $(FILES) $(PV) && \
-	cp tests/*.txt tests/*.expected $(PV)/tests/ && \
+	cp tests/*.txt $(PV)/tests/ 2>/dev/null || true && \
+	cp tests/*.expected $(PV)/tests/ 2>/dev/null || true && \
 	cp scripts/*.py scripts/README.md $(PV)/scripts/ && \
+	cp corpus/parse/* $(PV)/corpus/parse/ && \
+	cp dicts/* $(PV)/dicts/ && \
 	tar cfz $(TARBALL) $(PV) && \
 	rm -rf $(PV)
 
@@ -116,3 +125,44 @@ check: $(TESTS)
 	  fi; \
 	done; \
 	exit $$rc
+
+# ------------------------------
+# Fuzzing (Clang + libFuzzer)
+# ------------------------------
+CLANG ?= clang
+LIB_SAN_FLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g
+FUZZ_CFLAGS = -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -O1 -g
+FUZZ_LDFLAGS = -fsanitize=fuzzer,address,undefined
+
+.PHONY: fuzz-lib fuzz fuzz-clean
+
+# Rebuild the library with clang and sanitizers suitable for fuzzing
+fuzz-lib:
+	rm -f fsp.o libfsp.a test_lexer.o test_lexer.c test_lexer.h test_parser.o test_parser.c test_parser.h
+	$(MAKE) -f GNUMakefile CC=$(CLANG) SAN_FLAGS="$(LIB_SAN_FLAGS)" test_lexer.c test_parser.c
+	$(MAKE) -f GNUMakefile CC=$(CLANG) SAN_FLAGS="$(LIB_SAN_FLAGS)" libfsp.a test_lexer.o test_parser.o
+
+fuzz_fsp_parse.o: fuzz_fsp_parse.c fsp.h test_parser.h test_lexer.h
+	$(CLANG) $(FUZZ_CFLAGS) -I. -DHAVE_STDLIB_H -DHAVE_STRING_H -c -o $@ $<
+
+fuzz_fsp_parse: fuzz-lib fuzz_fsp_parse.o $(FSPLIB) test_lexer.o test_parser.o
+	$(CLANG) $(FUZZ_CFLAGS) -o $@ fuzz_fsp_parse.o test_lexer.o test_parser.o $(FSPLIB) $(FUZZ_LDFLAGS)
+
+fuzz: fuzz_fsp_parse
+
+fuzz-clean:
+	rm -f fuzz_fsp_parse fuzz_fsp_parse.o
+
+# Convenience run targets
+FUZZ_TIMEOUT ?= 10
+FUZZ_TIME ?= 60
+FUZZ_DICT ?= dicts/fsp.dict
+PARSE_CORPUS ?= corpus/parse
+
+.PHONY: fuzz-parse-run artifacts
+
+artifacts:
+	mkdir -p artifacts
+
+fuzz-parse-run: fuzz_fsp_parse artifacts
+	./fuzz_fsp_parse -timeout=$(FUZZ_TIMEOUT) -max_total_time=$(FUZZ_TIME) -artifact_prefix=artifacts/ -dict=$(FUZZ_DICT) $(PARSE_CORPUS)

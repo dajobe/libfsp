@@ -1,0 +1,3 @@
+print "hello";
+let x = 42;
+

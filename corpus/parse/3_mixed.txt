@@ -1,0 +1,5 @@
+print "hello";
+let x = 42;
+let name = "world";
+print name;
+
