@@ -42,12 +42,20 @@ python3 postprocess-flex.py output.c > output.tmp
 mv output.tmp output.c
 ```
 
-**Options:**
+**Important Options:**
 
 ```bash
-python3 postprocess-flex.py --help
-python3 postprocess-flex.py -c raptor_config.h output.c > output.tmp
+# Specify your project's config header (highly recommended for host projects)
+python3 postprocess-flex.py -c myproject_config.h output.c > output.tmp
+
+# Examples for specific projects:
+python3 postprocess-flex.py -c raptor_config.h turtle_lexer.c > turtle_lexer.tmp
+python3 postprocess-flex.py -c rasqal_config.h sparql_lexer.c > sparql_lexer.tmp
 ```
+
+**Note:** Host projects should use the `-c/--config-header` option to specify their
+own config header name (e.g., `raptor_config.h`, `rasqal_config.h`) instead of the
+default `config.h`.
 
 ### postprocess-bison.py
 
