@@ -169,7 +169,10 @@ FLEX_MIN_VERSION=2.5.19
 FLEX_REC_VERSION=2.5.36
 
 # Do not want AM_PROG_LEX which adds 'missing' to LEX if it's not around
-AC_PROG_LEX(noyywrap)
+# Just find flex binary, don't check for lex library (we use %option noyywrap)
+AC_CHECK_PROGS(LEX, flex lex, :)
+LEXLIB=
+AC_SUBST(LEX_OUTPUT_ROOT, lex.yy)
 AC_MSG_CHECKING(flex)
 if test "$USE_MAINTAINER_MODE" = yes; then
   # maintainer mode - flex is required
