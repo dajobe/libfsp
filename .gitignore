@@ -19,8 +19,8 @@ autom4te.cache/
 /build/
 compile
 config.guess
-config.h
-config.h.in
+fsp_config.h
+fsp_config.h.in
 config.log
 config.status
 config.sub

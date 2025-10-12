@@ -51,13 +51,6 @@ FUZZING.md
 # Generated source files for test parser/lexer and config
 BUILT_SOURCES = fsp_config.h test_lexer.c test_lexer.h test_parser.c test_parser.h
 
-# Create fsp_config.h from config.h for standalone builds
-fsp_config.h:
-	@if test ! -r fsp_config.h -a -r $(top_builddir)/config.h; then \
-	  echo $(LN_S) $(top_builddir)/config.h fsp_config.h; \
-	  $(LN_S) $(top_builddir)/config.h fsp_config.h 2>/dev/null || cp -f $(top_builddir)/config.h fsp_config.h || true; \
-	fi
-
 MAINTAINERCLEANFILES = test_lexer.c test_lexer.h \
 test_parser.c test_parser.h test_parser.output
 

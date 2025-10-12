@@ -62,8 +62,16 @@ TESTOBJS=$(TESTSRCS:.c=.o)
 
 all: $(LIBS) $(TESTS)
 
+# Create fsp_config.h from fsp_config_standalone.h for standalone builds
+fsp_config.h: fsp_config_standalone.h
+	@if test ! -r fsp_config.h; then \
+	  echo ln -s fsp_config_standalone.h fsp_config.h; \
+	  ln -s fsp_config_standalone.h fsp_config.h; \
+	fi
+
 # Library deps
-fsp.c: fsp.h
+fsp.c: fsp.h fsp_config.h
+fsp.h: fsp_config.h
 $(FSPLIBSRCS): fsp_internal.h
 
 $(FSPLIB): $(FSPLIBOBJS)
