@@ -45,6 +45,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   if (!data || size == 0)
     return 0;
 
+  /* Suppress parse error messages during fuzzing */
+  test_parser_set_quiet(1);
+
   /* Reset parser state */
   test_parser_reset();
 

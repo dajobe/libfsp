@@ -48,6 +48,9 @@ typedef struct statement_node_s {
 statement_node* test_parser_get_statements(void);
 void test_parser_free_statements(void);
 void test_parser_reset(void);
+
+/* Set quiet mode (suppress error messages, useful for fuzzing) */
+void test_parser_set_quiet(int quiet);
 }
 
 %{
@@ -79,11 +82,15 @@ void yyerror(fsp_context* fsp_ctx, void *scanner, const char *msg);
 static statement_node *parsed_statements = NULL;
 static statement_node *last_statement = NULL;
 
+/* Flag to suppress error messages (useful for fuzzing) */
+static int test_parser_quiet = 0;
+
 /* Internal error function */
 static void
 test_parser_internal_error(const char *msg)
 {
-  fprintf(stderr, "Parse error: %s\n", msg);
+  if(!test_parser_quiet)
+    fprintf(stderr, "Parse error: %s\n", msg);
 }
 
 /* Add a statement to the parse tree */
@@ -138,6 +145,13 @@ void
 test_parser_reset(void)
 {
   test_parser_free_statements();
+}
+
+/* Set quiet mode (suppress error messages) */
+void
+test_parser_set_quiet(int quiet)
+{
+  test_parser_quiet = quiet;
 }
 
 /* Note: yyerror is #defined to test_parser_error by Bison,
