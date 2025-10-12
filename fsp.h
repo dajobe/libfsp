@@ -23,6 +23,11 @@
 #ifndef FSP_H
 #define FSP_H
 
+/* Include config wrapper for function renaming when embedded */
+#ifdef FSP_CONFIG
+#include <fsp_config.h>
+#endif
+
 /**
  * fsp_status:
  * @FSP_STATUS_OK: Success, parsing complete
