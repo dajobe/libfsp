@@ -18,7 +18,14 @@ sudo dnf install clang gcc-c++
 ```
 
 **Note:** The sanitizers require C++ standard library support (libstdc++),
-even though libfsp is written in C.
+even though libfsp is written in C. On ARM64 systems, if you encounter
+`cannot find -lstdc++` errors, verify the library symlink exists:
+
+```bash
+# Check and create symlink if needed
+cd /usr/lib/aarch64-linux-gnu
+ls -la libstdc++.so || sudo ln -s libstdc++.so.6 libstdc++.so
+```
 
 ### macOS (via Homebrew)
 
