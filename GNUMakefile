@@ -73,8 +73,10 @@ $(FSPLIB): $(FSPLIBOBJS)
 test_lexer.c: test_lexer.l test_parser.c scripts/postprocess-flex.py
 	$(LEX) -o$@ $<
 	for file in test_lexer.c test_lexer.h; do \
-	  $(PYTHON3) scripts/postprocess-flex.py $$file > $$file.tmp || exit 1; \
-	  mv -f $$file.tmp $$file; \
+	  if [ -f $$file ]; then \
+	    $(PYTHON3) scripts/postprocess-flex.py $$file > $$file.tmp || exit 1; \
+	    mv -f $$file.tmp $$file; \
+	  fi; \
 	done
 
 test_parser.c: test_parser.y scripts/postprocess-bison.py
