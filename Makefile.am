@@ -90,12 +90,12 @@ test_parser.c: $(srcdir)/test_parser.y $(srcdir)/scripts/postprocess-bison.py
 test_parser.h: test_parser.c ; @exit 0
 
 # Run Clang static analyzer over sources.
-analyze: $(SOURCES)
-	@list='$(SOURCES)'; \
+analyze: $(SOURCES) fsp_config.h
+	@list='$(libfsp_la_SOURCES) $(fsp_test_SOURCES)'; \
 	result=0; \
 	for file in $$list; do \
 	  if echo $$file | grep '\.c$$' >/dev/null 2>&1; then \
-	    $(RECHO) "Analyzing $$file"; \
+	    echo "Analyzing $$file"; \
 	    $(ANALYZE_COMMAND) $(srcdir)/$$file; \
 	    status=$$?; \
 	    if test $$status != 0; then \

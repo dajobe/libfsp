@@ -114,10 +114,14 @@ serialize_ast(void)
     
     /* Grow buffer if needed */
     if(result_len + line_len + 1 > result_size) {
+      char *new_result;
       result_size = result_size * 2 + line_len;
-      result = (char*)realloc(result, result_size);
-      if(!result)
+      new_result = (char*)realloc(result, result_size);
+      if(!new_result) {
+        free(result);
         return NULL;
+      }
+      result = new_result;
     }
     
     strcpy(result + result_len, line);
@@ -438,6 +442,7 @@ int main(int argc, char **argv)
   } else {
     /* Read half */
     bytes_read = fsp_read_input(ctx, buffer, test_data_len / 2);
+    (void)bytes_read; /* We don't check bytes_read here; just exercising compact */
     /* Compact */
     fsp_buffer_compact(ctx);
     available = fsp_buffer_available(ctx);
