@@ -7,14 +7,18 @@ in Apple Clang on macOS).
 
 ### Linux
 
-Install LLVM/Clang:
+Install LLVM/Clang and C++ standard library:
+
 ```bash
 # Ubuntu/Debian
-sudo apt-get install clang
+sudo apt-get install clang g++
 
 # Fedora/RHEL
-sudo dnf install clang
+sudo dnf install clang gcc-c++
 ```
+
+**Note:** The sanitizers require C++ standard library support (libstdc++),
+even though libfsp is written in C.
 
 ### macOS (via Homebrew)
 
@@ -47,10 +51,12 @@ make -f GNUMakefile fuzz
 ```
 
 This builds:
+
 - `fuzz_fsp_parse` - Parser fuzzer with AddressSanitizer and
   UndefinedBehaviorSanitizer
 
 The fuzzer is built with:
+
 - `-fsanitize=fuzzer` - libFuzzer instrumentation
 - `-fsanitize=address` - Detect buffer overflows, use-after-free, etc.
 - `-fsanitize=undefined` - Detect undefined behavior
@@ -82,6 +88,7 @@ make -f GNUMakefile fuzz-parse-run FUZZ_TIME=3600
 ```
 
 Common libFuzzer options:
+
 - `-timeout=N` - Timeout for each input (default: 10 seconds)
 - `-max_total_time=N` - Total fuzzing time in seconds
 - `-jobs=N` - Number of parallel fuzzing jobs
@@ -91,6 +98,7 @@ Common libFuzzer options:
 ## Corpus
 
 Seed corpus files are in `corpus/parse/`:
+
 - `1_basic.txt` - Simple print and let statements
 - `2_multiline.txt` - Triple-quoted multi-line strings
 - `3_mixed.txt` - Mixed statement types
@@ -98,6 +106,7 @@ Seed corpus files are in `corpus/parse/`:
 - `5_single_char.txt` - Single character
 
 The fuzzer will automatically:
+
 - Minimize the corpus
 - Generate new interesting inputs
 - Save crashing inputs to `artifacts/`
@@ -105,6 +114,7 @@ The fuzzer will automatically:
 ## Dictionary
 
 The fuzzer uses `dicts/fsp.dict` which contains:
+
 - Language keywords (`print`, `let`)
 - Operators (`=`, `;`)
 - String delimiters (`"`, `"""`)
@@ -115,6 +125,7 @@ This helps the fuzzer generate valid inputs faster.
 ## Interpreting Results
 
 ### Success
+
 ```
 INFO: seed corpus: files: 5 ...
 #1024   pulse  cov: 89 ft: 123 ...
@@ -123,6 +134,7 @@ Done 10000 runs in 60 seconds
 ```
 
 ### Crash Found
+
 ```
 SUMMARY: AddressSanitizer: heap-buffer-overflow ...
 artifact_prefix='artifacts/'; Test unit written to artifacts/crash-...
@@ -172,6 +184,7 @@ rm -rf artifacts/
 ## What Gets Tested
 
 The fuzzer exercises:
+
 - **Streaming parser**: Various chunk sizes (1-64 bytes)
 - **Token boundaries**: Splitting tokens at different positions
 - **Triple-quoted strings**: Multi-line content across chunks
@@ -199,4 +212,3 @@ Example GitHub Actions workflow (requires Ubuntu):
 - [libFuzzer Documentation](https://llvm.org/docs/LibFuzzer.html)
 - [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html)
 - [UndefinedBehaviorSanitizer](https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html)
-
