@@ -114,8 +114,9 @@ def fix(file):
                 r"^\#line \d+ (.*\.c)", rf"#line {line_number + line_offset} \1", line
             )
 
-            # Remove all mention of unused var yynerrs
-            line = re.sub(r"^(\s*)(.*yynerrs.*)", r"\1/* \2 */", line)
+            # Remove all mention of unused var yynerrs (but don't nest comments)
+            if "yynerrs" in line and not line.strip().startswith("/*"):
+                line = re.sub(r"^(\s*)(.*yynerrs.*)", r"\1/* \2 */", line)
 
             # Track when we enter yydestruct function
             if "yydestruct (const char *yymsg," in line:
