@@ -139,7 +139,9 @@ FUZZ_LDFLAGS = -fsanitize=fuzzer,address,undefined
 # Rebuild the library with clang and sanitizers suitable for fuzzing
 fuzz-lib:
 	rm -f fsp.o libfsp.a test_lexer.o test_lexer.c test_lexer.h test_parser.o test_parser.c test_parser.h
-	$(MAKE) -f GNUMakefile CC=$(CLANG) SAN_FLAGS="$(LIB_SAN_FLAGS)" test_lexer.c test_parser.c
+	@# First, generate lexer/parser sources (without compiling)
+	$(MAKE) -f GNUMakefile test_lexer.c test_parser.c
+	@# Then compile everything with sanitizers
 	$(MAKE) -f GNUMakefile CC=$(CLANG) SAN_FLAGS="$(LIB_SAN_FLAGS)" libfsp.a test_lexer.o test_parser.o
 
 fuzz_fsp_parse.o: fuzz_fsp_parse.c fsp.h test_parser.h test_lexer.h
