@@ -79,9 +79,7 @@ possible_warnings="\
 -Waggregate-return \
 -Wbad-function-cast \
 -Wcast-align \
--Wdeclaration-after-statement \
 -Wdisabled-optimization \
--Wdiv-by-zero \
 -Wendif-labels \
 -Werror-implicit-function-declaration \
 -Wfloat-equal \
