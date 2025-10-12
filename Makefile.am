@@ -48,6 +48,8 @@ corpus/parse/4_empty.txt \
 corpus/parse/5_single_char.txt \
 FUZZING.md
 
+if MAINTAINER_MODE
+
 # Generated source files for test parser/lexer and config
 BUILT_SOURCES = fsp_config.h test_lexer.c test_lexer.h test_parser.c test_parser.h
 
@@ -62,8 +64,6 @@ CLEANFILES=*.plist test_lexer.c.t test_lexer.h.t fsp_config.h
 
 fsp_test_SOURCES = fsp_test.c test_lexer.c test_parser.c
 fsp_test_LDADD = $(builddir)/libfsp.la
-
-if MAINTAINER_MODE
 
 # Test lexer generation with postprocess-flex.py
 # Note: postprocess-flex.py outputs to stdout, so we redirect to .t and move
