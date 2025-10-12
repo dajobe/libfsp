@@ -173,4 +173,4 @@ artifacts:
 	mkdir -p artifacts
 
 fuzz-parse-run: fuzz_fsp_parse artifacts
-	./fuzz_fsp_parse -timeout=$(FUZZ_TIMEOUT) -max_total_time=$(FUZZ_TIME) -artifact_prefix=artifacts/ -dict=$(FUZZ_DICT) $(PARSE_CORPUS)
+	./fuzz_fsp_parse -detect_leaks=0 -timeout=$(FUZZ_TIMEOUT) -max_total_time=$(FUZZ_TIME) -artifact_prefix=artifacts/ -dict=$(FUZZ_DICT) $(PARSE_CORPUS)

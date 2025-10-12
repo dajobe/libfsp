@@ -153,10 +153,10 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   (void)test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
 
 done:
-  /* Clean up parser state - this should trigger %destructor for any
-   * semantic values still on the stack. However, Bison push parser
-   * might not properly clean up on error, so we also manually clean
-   * up in the fuzzer. */
+  /* Clean up parser state. The %destructor should handle cleanup of any
+   * semantic values still on the stack, but this doesn't always work
+   * correctly with Bison push parsers during error recovery.
+   * See: https://www.gnu.org/software/bison/manual/html_node/Destructor-Decl.html */
   test_parser_pstate_delete(pstate);
   test_lexer_lex_destroy(scanner);
   fsp_destroy(ctx);

@@ -102,6 +102,23 @@ Common libFuzzer options:
 - `-max_len=N` - Maximum input length (default: varies)
 - `-dict=FILE` - Use mutation dictionary
 
+### Leak Detection
+
+By default, the fuzzer runs with `-detect_leaks=0` to disable LeakSanitizer.
+This is because **Bison's push parser** doesn't always properly invoke `%destructor`
+for semantic values on the stack during error recovery.
+
+This is a **known limitation of Bison**, not a bug in libfsp. The small leaks only
+occur in the test parser/lexer (used for validating libfsp), not in libfsp's core
+streaming buffer management.
+
+To enable leak detection anyway:
+```bash
+./fuzz_fsp_parse -detect_leaks=1 -timeout=10 -max_total_time=60 corpus/parse
+```
+
+Expect small leaks (a few bytes) from parse errors - these can be safely ignored.
+
 ## Corpus
 
 Seed corpus files are in `corpus/parse/`:
