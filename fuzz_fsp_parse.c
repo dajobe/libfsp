@@ -101,11 +101,19 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       TEST_PARSER_STYPE lval;
       int token;
 
+      /* Initialize lval to avoid using uninitialized memory */
+      memset(&lval, 0, sizeof(lval));
+
       /* Get next token from lexer */
       token = test_lexer_lex(&lval, scanner);
 
       if(token == 0) {
         /* No more tokens available */
+        /* Free any partially constructed string */
+        if(lval.string) {
+          free(lval.string);
+          lval.string = NULL;
+        }
         if(is_end) {
           /* EOF - push EOF token to parser */
           (void)test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
@@ -115,14 +123,20 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         break;
       }
 
-      if(token == ERROR)
+      if(token == ERROR) {
+        /* Free any allocated string from lval before exiting */
+        if(lval.string)
+          free(lval.string);
         goto done;
+      }
 
       /* Push token to parser */
       status = test_parser_push_parse(pstate, token, &lval, ctx, scanner);
 
-      if(status != YYPUSH_MORE)
+      if(status != YYPUSH_MORE) {
+        /* Parser takes ownership of lval, so we don't free here */
         goto done;
+      }
     }
 
     p += chunk;
