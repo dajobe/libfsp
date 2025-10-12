@@ -21,8 +21,7 @@
 # Whitespace
 " "
 
-# Special cases
-""
+# Special cases for identifiers
 "NA"
 "null"
 "NULL"
