@@ -55,6 +55,9 @@ void test_parser_reset(void);
 #include <string.h>
 #include <stdlib.h>
 
+/* strdup is POSIX but not in C11 standard - provide prototype */
+char *strdup(const char *s);
+
 #include "fsp.h"
 
 #include <test_parser.h>
