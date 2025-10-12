@@ -102,9 +102,12 @@ libfsp enables Flex/Bison parsers to handle streaming input by:
 3. **Managing buffer lifecycle** with compaction and growth as needed
 4. **Supporting Bison push parser** by maintaining state across calls
 5. **Handling partial tokens** automatically via Flex's buffer mechanism
+6. **Finalizing parsing** by pushing EOF token (0) to detect incomplete input
 
 The host project's parser uses Bison's push parser API, and the lexer calls
-libfsp's `fsp_read_input()` from its YY_INPUT macro.
+libfsp's `fsp_read_input()` from its YY_INPUT macro. After all input is processed,
+the host must push a final EOF token (0) to the Bison push parser to properly
+finalize parsing and detect syntax errors in incomplete input.
 
 ## Requirements
 
@@ -322,12 +325,22 @@ while(has_more_data || final_drain) {
     if(!final_drain && is_eof) break;
 }
 
-/* Push final EOF to parser... */
+/* CRITICAL: Push final EOF token (0) to parser to finalize parsing.
+ * This allows the parser to detect incomplete statements and syntax errors.
+ * Without this, the parser may incorrectly accept incomplete input. */
+status = parser_push_parse(pstate, 0, NULL, ctx, scanner);
 
 fsp_destroy(ctx);
 ```
 
 **Why buffer accumulation?** Flex interprets `YY_INPUT` returning 0 as EOF and makes tokenization decisions immediately. By accumulating chunks before calling the lexer, we ensure Flex always has enough lookahead to correctly identify tokens. This works with **any chunk size** (1 byte to 64KB).
+
+**Why push EOF token (0)?** After draining all tokens from the lexer, you **MUST** push a final EOF token (0) to the Bison push parser. This signals end-of-input and allows the parser to:
+- Detect incomplete statements (e.g., missing semicolons)
+- Report syntax errors for truncated input
+- Properly finalize parsing and return success/failure status
+
+Without the EOF token, the parser may incorrectly accept incomplete input.
 
 **See also:**
 
