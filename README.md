@@ -197,6 +197,92 @@ You can see this pattern demonstrated in:
 - [Rasqal](https://github.com/dajobe/rasqal) with libsv integration
 - [Raptor](https://github.com/dajobe/raptor) (after libfsp integration)
 
+### Real-World Example: Raptor Integration
+
+Raptor's integration (commit 292ec8bd) demonstrates the complete pattern:
+
+**1. Create `fsp_config.h` wrapper:**
+```c
+/* src/fsp_config.h */
+#ifndef FSP_CONFIG_H
+#define FSP_CONFIG_H
+
+#ifdef WIN32
+#include <win32_raptor_config.h>
+#else
+#include <raptor_config.h>
+#endif
+
+/* Rename libfsp functions to avoid conflicts */
+#define fsp_create raptor_fsp_create
+#define fsp_destroy raptor_fsp_destroy
+#define fsp_buffer_append raptor_fsp_buffer_append
+#define fsp_buffer_available raptor_fsp_buffer_available
+#define fsp_buffer_compact raptor_fsp_buffer_compact
+#define fsp_read_input raptor_fsp_read_input
+#define fsp_set_user_data raptor_fsp_set_user_data
+#define fsp_get_user_data raptor_fsp_get_user_data
+
+#endif
+```
+
+**2. Include libfsp source directly:**
+```makefile
+# src/Makefile.am
+libraptor2_la_SOURCES += \
+  fsp_config.h \
+  $(top_srcdir)/libfsp/fsp.c \
+  $(top_srcdir)/libfsp/fsp.h
+
+AM_CPPFLAGS += -DHAVE_FSP_CONFIG_H -I$(top_srcdir)/libfsp
+```
+
+**3. Use postprocess scripts with project config:**
+```makefile
+turtle_lexer.c: turtle_lexer.l turtle_parser.c \
+                $(top_srcdir)/libfsp/scripts/postprocess-flex.py
+	$(LEX) -o$@ turtle_lexer.l
+	$(PYTHON3) $(top_srcdir)/libfsp/scripts/postprocess-flex.py \
+	  -c raptor_config.h -g HAVE_CONFIG_H \
+	  turtle_lexer.c > turtle_lexer.t
+	mv -f turtle_lexer.t turtle_lexer.c
+```
+
+**4. Streaming parser implementation pattern:**
+```c
+/* Store fsp_context and push parser state in parser struct */
+struct raptor_turtle_parser_s {
+  fsp_context *fsp_ctx;
+  turtle_parser_pstate *pstate;
+  /* ... other fields ... */
+};
+
+/* Initialize on parse_start */
+turtle_parser->fsp_ctx = fsp_create();
+fsp_set_user_data(turtle_parser->fsp_ctx, rdf_parser);
+
+/* In lexer: enable streaming via YY_INPUT */
+#define YY_INPUT(buf,result,max_size) \
+  result = fsp_read_input(yyextra, buf, max_size)
+
+/* In parser: retrieve user data */
+#define PARSER_FROM_FSP_CONTEXT(fsp_ctx) \
+  ((raptor_parser*)fsp_get_user_data(fsp_ctx))
+
+/* Parse with MIN_BUFFER_FOR_LEX threshold (calculated by fsp-helper.py) */
+#define MIN_BUFFER_FOR_LEX 16
+
+while(fsp_buffer_available(fsp_ctx) >= MIN_BUFFER_FOR_LEX || is_end) {
+  token = turtle_lexer_lex(&lval, scanner);
+  if(!token && !is_end) return 0;  /* Need more data */
+  rc = turtle_parser_push_parse(pstate, token, &lval, fsp_ctx, scanner);
+  if(rc != YYPUSH_MORE) break;
+}
+```
+
+This pattern eliminates Raptor's old manual buffer management (consumed/processed/consumable
+tracking) and enables proper streaming with arbitrary chunk sizes.
+
 ## Example Usage
 
 **Quick Start:**
