@@ -20,6 +20,14 @@
  * 
  */
 
+#ifdef FSP_CONFIG
+#include <fsp_config.h>
+#else
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+#endif
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

@@ -23,13 +23,6 @@
 #ifndef FSP_H
 #define FSP_H
 
-#ifdef FSP_CONFIG
-#include <fsp_config.h>
-#endif
-
-#include <stdio.h>
-#include <stddef.h>
-
 /**
  * fsp_status:
  * @FSP_STATUS_OK: Success, parsing complete

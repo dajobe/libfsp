@@ -22,10 +22,10 @@
 
 #ifdef FSP_CONFIG
 #include <fsp_config.h>
-#endif
-
+#else
 #ifdef HAVE_CONFIG_H
 #include <config.h>
+#endif
 #endif
 
 #include <stdlib.h>
