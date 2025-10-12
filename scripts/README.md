@@ -119,14 +119,18 @@ mv output.tmp output.c
 # Specify your project's config header (highly recommended for host projects)
 python3 postprocess-flex.py -c myproject_config.h output.c > output.tmp
 
+# Specify both config header and guard macro (most control)
+python3 postprocess-flex.py -c myproject_config.h -g HAVE_MYPROJECT_CONFIG_H output.c > output.tmp
+
 # Examples for specific projects:
-python3 postprocess-flex.py -c raptor_config.h turtle_lexer.c > turtle_lexer.tmp
-python3 postprocess-flex.py -c rasqal_config.h sparql_lexer.c > sparql_lexer.tmp
+python3 postprocess-flex.py -c raptor_config.h -g HAVE_RAPTOR_CONFIG_H turtle_lexer.c > turtle_lexer.tmp
+python3 postprocess-flex.py -c rasqal_config.h -g HAVE_RASQAL_CONFIG_H sparql_lexer.c > sparql_lexer.tmp
 ```
 
 **Note:** Host projects should use the `-c/--config-header` option to specify their
-own config header name (e.g., `raptor_config.h`, `rasqal_config.h`) instead of the
-default `config.h`.
+own config header name (e.g., `raptor_config.h`, `rasqal_config.h`) and the `-g/--guard-macro`
+option to specify the corresponding guard macro (e.g., `HAVE_RAPTOR_CONFIG_H`). The default
+guard macro is `HAVE_CONFIG_H`.
 
 ### postprocess-bison.py
 
@@ -197,16 +201,16 @@ MAINTAINERCLEANFILES = turtle_lexer.c turtle_lexer.h \
 turtle_parser.c turtle_parser.h turtle_parser.output
 
 if MAINTAINER_MODE
-# Flex lexer with custom config header
+# Flex lexer with custom config header and guard macro
 turtle_lexer.c: $(srcdir)/turtle_lexer.l turtle_parser.c \
                 $(top_srcdir)/libfsp/scripts/postprocess-flex.py
- $(AM_V_GEN) \
- $(LEX) -o$@ $(srcdir)/turtle_lexer.l; \
- for file in turtle_lexer.c turtle_lexer.h; do \
-   $(PYTHON3) $(top_srcdir)/libfsp/scripts/postprocess-flex.py \
-     -c raptor_config.h $$file > turtle_lexer.t || exit 1; \
-   mv -f turtle_lexer.t $$file; \
- done
+	$(AM_V_GEN) \
+	$(LEX) -o$@ $(srcdir)/turtle_lexer.l; \
+	for file in turtle_lexer.c turtle_lexer.h; do \
+	  $(PYTHON3) $(top_srcdir)/libfsp/scripts/postprocess-flex.py \
+	    -c raptor_config.h -g HAVE_RAPTOR_CONFIG_H $$file > turtle_lexer.t || exit 1; \
+	  mv -f turtle_lexer.t $$file; \
+	done
 
 turtle_lexer.h: turtle_lexer.c ; @exit 0
 
