@@ -3,21 +3,21 @@
  * fsp_test.c - Test program for libfsp
  *
  * Copyright (C) 2025, Dave Beckett https://www.dajobe.org/
- * 
+ *
  * This package is Free Software
- * 
+ *
  * It is licensed under the following three licenses as alternatives:
  *   1. GNU Lesser General Public License (LGPL) V2.1 or any newer version
  *   2. GNU General Public License (GPL) V2 or any newer version
  *   3. Apache License, V2.0 or any newer version
- * 
+ *
  * You may not use this file except in compliance with at least one of
  * the above three licenses.
- * 
+ *
  * See LICENSE.txt at the top of this package for the
  * complete terms and further detail along with the license texts for
  * the licenses in COPYING.LIB, COPYING and LICENSE-2.0.txt respectively.
- * 
+ *
  */
 
 #ifdef HAVE_FSP_CONFIG_H
@@ -48,36 +48,36 @@ read_file(const char *filename, size_t *length)
   char *content;
   size_t file_size;
   size_t bytes_read;
-  
+
   fp = fopen(filename, "rb");
   if(!fp)
     return NULL;
-  
+
   /* Get file size */
   fseek(fp, 0, SEEK_END);
   file_size = ftell(fp);
   fseek(fp, 0, SEEK_SET);
-  
+
   /* Allocate buffer */
   content = (char*)malloc(file_size + 1);
   if(!content) {
     fclose(fp);
     return NULL;
   }
-  
+
   /* Read content */
   bytes_read = fread(content, 1, file_size, fp);
   fclose(fp);
-  
+
   if(bytes_read != file_size) {
     free(content);
     return NULL;
   }
-  
+
   content[file_size] = '\0';
   if(length)
     *length = file_size;
-  
+
   return content;
 }
 
@@ -89,23 +89,23 @@ serialize_ast(void)
   char *result;
   size_t result_size;
   size_t result_len;
-  
+
   stmt = test_parser_get_statements();
-  
+
   /* Start with reasonable buffer */
   result_size = 1024;
   result = (char*)malloc(result_size);
   if(!result)
     return NULL;
-  
+
   result[0] = '\0';
   result_len = 0;
-  
+
   /* Serialize each statement */
   while(stmt) {
     char line[2048];
     size_t line_len;
-    
+
     if(stmt->type == STMT_PRINT) {
       snprintf(line, sizeof(line), "PRINT: %s\n", stmt->value);
     } else if(stmt->type == STMT_LET) {
@@ -113,9 +113,9 @@ serialize_ast(void)
     } else {
       continue;
     }
-    
+
     line_len = strlen(line);
-    
+
     /* Grow buffer if needed */
     if(result_len + line_len + 1 > result_size) {
       char *new_result;
@@ -127,13 +127,13 @@ serialize_ast(void)
       }
       result = new_result;
     }
-    
+
     strcpy(result + result_len, line);
     result_len += line_len;
-    
+
     stmt = stmt->next;
   }
-  
+
   return result;
 }
 
@@ -144,20 +144,20 @@ validate_parse_result(const char *expected_file)
   char *expected_content;
   char *actual_content;
   int result;
-  
+
   expected_content = read_file(expected_file, NULL);
   if(!expected_content) {
     fprintf(stderr, "Failed to read expected file: %s\n", expected_file);
     return -1;
   }
-  
+
   actual_content = serialize_ast();
   if(!actual_content) {
     fprintf(stderr, "Failed to serialize AST\n");
     free(expected_content);
     return -1;
   }
-  
+
   /* Byte-for-byte comparison */
   if(strcmp(actual_content, expected_content) == 0) {
     result = 0;
@@ -167,7 +167,7 @@ validate_parse_result(const char *expected_file)
     fprintf(stderr, "  Got:\n%s", actual_content);
     result = -1;
   }
-  
+
   free(expected_content);
   free(actual_content);
   return result;
@@ -346,16 +346,16 @@ test_file_parser(const char *input_file, const char *expected_file,
   char *input;
   size_t length;
   int result;
-  
+
   input = read_file(input_file, &length);
   if(!input) {
     fprintf(stderr, "Failed to read input file: %s\n", input_file);
     return -1;
   }
-  
+
   result = test_streaming_parser(input, chunk_size, expected_file);
   free(input);
-  
+
   return result;
 }
 
@@ -372,10 +372,10 @@ int main(int argc, char **argv)
   char *large_data;
   int bytes_read;
   size_t available;
-  
+
   (void)argc;
   (void)argv;
-  
+
   test_data_len = strlen(test_data);
 
   fprintf(stderr, "libfsp test suite\n");
@@ -579,7 +579,7 @@ int main(int argc, char **argv)
   {
     char *input;
     size_t length;
-    
+
     input = read_file("tests/missing_semicolon.txt", &length);
     if(input) {
       /* Should handle error gracefully, not crash */
@@ -605,7 +605,7 @@ int main(int argc, char **argv)
   {
     char *input;
     size_t length;
-    
+
     input = read_file("tests/unterminated_string.txt", &length);
     if(input) {
       /* Should handle error gracefully, not crash */
@@ -626,12 +626,12 @@ int main(int argc, char **argv)
     int result;
     statement_node *stmts_before;
     statement_node *stmts_after;
-    
+
     input = read_file("tests/error_at_eof.txt", &length);
     if(input) {
       /* Reset parser state */
       test_parser_reset();
-      
+
       /* Verify no statements exist before parsing */
       stmts_before = test_parser_get_statements();
       if(stmts_before != NULL) {
@@ -641,7 +641,7 @@ int main(int argc, char **argv)
         /* Should detect error at EOF */
         result = test_streaming_parser(input, 1024, NULL);
         free(input);
-        
+
         /* Verify error was detected */
         if(result >= 0) {
           FAIL("Expected parse error was not detected");
