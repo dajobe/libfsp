@@ -25,7 +25,7 @@ Host projects should specify their config header:
   python3 postprocess-flex.py -c rasqal_config.h sparql_lexer.c > sparql_lexer.tmp
 
 Options:
-  -c, --config-header NAME    Specify project config header (default: config.h)
+  -c, --config-header NAME    Specify project config header (default: fsp_config.h)
                               Use your project's config header (e.g., raptor_config.h)
 
 (C) Copyright 2024-2025 Dave Beckett https://www.dajobe.org/
@@ -39,13 +39,13 @@ import sys
 logger = logging.getLogger(__name__)
 
 
-def fix(flex_input_file, config_header="config.h"):
+def fix(flex_input_file, config_header="fsp_config.h"):
     """
     Formats flex output according to specified rules.
     
     Args:
         flex_input_file: Path to the flex-generated file
-        config_header: Name of the config header to include (default: config.h)
+        config_header: Name of the config header to include (default: fsp_config.h)
     """
 
     with open(flex_input_file, "r") as infile:
@@ -59,8 +59,13 @@ def fix(flex_input_file, config_header="config.h"):
 
         line_offset = 1
 
+        # Generate appropriate HAVE_*_H macro from header name
+        # e.g., fsp_config.h -> HAVE_FSP_CONFIG_H, raptor_config.h -> HAVE_RAPTOR_CONFIG_H
+        header_base = config_header.replace('.h', '').replace('.', '_').upper()
+        have_macro = f"HAVE_{header_base}_H"
+
         f_out.write(
-            f"""#ifdef HAVE_CONFIG_H
+            f"""#ifdef {have_macro}
 #include <{config_header}>
 #endif
 
@@ -237,8 +242,8 @@ def fix(flex_input_file, config_header="config.h"):
 def main():
     parser = argparse.ArgumentParser(description="Format flex output")
     parser.add_argument("INPUT", help="Input flex file")
-    parser.add_argument("-c", "--config-header", default="config.h",
-                        help="Config header to include (default: config.h)")
+    parser.add_argument("-c", "--config-header", default="fsp_config.h",
+                        help="Config header to include (default: fsp_config.h)")
     parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode")
     args = parser.parse_args()
 

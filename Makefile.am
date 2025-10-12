@@ -12,7 +12,7 @@ ANALYZE_COMMAND = $(ANALYZE) \
 	$(ANALYZE_FLAGS)
 
 noinst_LTLIBRARIES = libfsp.la
-AM_CPPFLAGS = -DFSP_CONFIG -I$(top_srcdir)/src -I$(builddir)
+AM_CPPFLAGS = -DHAVE_FSP_CONFIG_H -I$(top_srcdir)/src -I$(builddir)
 
 noinst_HEADERS = fsp_internal.h
 

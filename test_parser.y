@@ -27,8 +27,8 @@
  */
 
 %code requires {
-#ifdef HAVE_CONFIG_H
-#include <config.h>
+#ifdef HAVE_FSP_CONFIG_H
+#include <fsp_config.h>
 #endif
 
 /* AST node structures for validation */

@@ -54,7 +54,7 @@ BISON?=$(shell which /opt/homebrew/opt/bison/bin/bison 2>/dev/null || which biso
 PYTHON3=python3
 
 LDFLAGS=$(DEBUG_FLAGS) $(SAN_FLAGS)
-CPPFLAGS=$(DEBUG_FLAGS) -I. -DHAVE_STDLIB_H -DHAVE_STRING_H
+CPPFLAGS=$(DEBUG_FLAGS) -I. -DHAVE_FSP_CONFIG_H -DHAVE_STDLIB_H -DHAVE_STRING_H
 CFLAGS=$(SAN_FLAGS)
 
 FSPLIBOBJS=$(FSPLIBSRCS:.c=.o)
@@ -151,7 +151,7 @@ fuzz-lib:
 	+$(MAKE) -f GNUMakefile CC=$(CLANG) SAN_FLAGS="$(LIB_SAN_FLAGS)" libfsp.a test_lexer.o test_parser.o
 
 fuzz_fsp_parse.o: fuzz_fsp_parse.c fsp.h test_parser.h test_lexer.h
-	$(CLANG) $(FUZZ_CFLAGS) -I. -DHAVE_STDLIB_H -DHAVE_STRING_H -c -o $@ $<
+	$(CLANG) $(FUZZ_CFLAGS) -I. -DHAVE_FSP_CONFIG_H -DHAVE_STDLIB_H -DHAVE_STRING_H -c -o $@ $<
 
 fuzz_fsp_parse: fuzz-lib fuzz_fsp_parse.o $(FSPLIB) test_lexer.o test_parser.o
 	$(CLANG) $(FUZZ_CFLAGS) -o $@ fuzz_fsp_parse.o test_lexer.o test_parser.o $(FSPLIB) $(FUZZ_LDFLAGS)
