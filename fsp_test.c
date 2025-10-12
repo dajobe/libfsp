@@ -231,6 +231,8 @@ test_streaming_parser(const char *input, size_t chunk_size,
    * See README.md "Streaming with Small Chunks" section for details.
    */
   while(pos < input_len || final_drain) {
+    int is_eof;
+
     /* Phase 1: Accumulate chunks until buffer is sufficiently full */
     while(pos < input_len && fsp_buffer_available(ctx) < MIN_BUFFER_FOR_LEX) {
       size_t chunk;
@@ -251,7 +253,7 @@ test_streaming_parser(const char *input, size_t chunk_size,
     }
 
     /* Check if we've reached end of input */
-    int is_eof = (pos >= input_len);
+    is_eof = (pos >= input_len);
 
     if(is_eof && !final_drain) {
       /* Signal EOF to FSP context - no more chunks coming */
