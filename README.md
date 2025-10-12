@@ -252,22 +252,104 @@ void* fsp_get_user_data(fsp_context *ctx);
 %define api.push-pull push
 ```
 
-### In your host code
+### In your host code (proper streaming integration)
+
+**Important:** To support arbitrarily small chunks (including 1-byte chunks), use the **buffer accumulation strategy**:
 
 ```c
 #include <fsp.h>
 
-fsp_context *ctx = fsp_create();
+#define MIN_BUFFER_FOR_LEX 64  /* Minimum buffer before calling lexer */
 
-/* Feed chunks */
-while(has_more_data) {
-  fsp_status status = fsp_parse_chunk(ctx, chunk, len, is_last);
-  if(status == FSP_STATUS_ERROR)
-    break;
+fsp_context *ctx = fsp_create();
+yyscan_t scanner;
+parser_pstate *pstate;
+int final_drain = 0;
+
+/* Initialize lexer and parser... */
+
+/* Feed chunks with proper accumulation */
+while(has_more_data || final_drain) {
+    /* Phase 1: Accumulate chunks until buffer is full enough */
+    while(has_more_data && fsp_buffer_available(ctx) < MIN_BUFFER_FOR_LEX) {
+        fsp_buffer_append(ctx, chunk, chunk_size);
+        has_more_data = read_next_chunk(&chunk, &chunk_size);
+    }
+
+    int is_eof = !has_more_data;
+    if(is_eof && !final_drain) {
+        ctx->more_chunks_expected = 0;
+        final_drain = 1;
+    }
+
+    /* Phase 2: Process tokens when buffer is ready */
+    while(fsp_buffer_available(ctx) > 0 || (is_eof && final_drain)) {
+        if(!is_eof && fsp_buffer_available(ctx) < MIN_BUFFER_FOR_LEX)
+            break;  /* Need more chunks */
+
+        token = lexer_lex(&lval, scanner);
+        if(token == 0) {
+            if(!is_eof) break;
+            final_drain = 0;
+            break;
+        }
+
+        /* Push token to parser... */
+    }
+
+    if(!final_drain && is_eof) break;
 }
+
+/* Push final EOF to parser... */
 
 fsp_destroy(ctx);
 ```
+
+**Why buffer accumulation?** Flex interprets `YY_INPUT` returning 0 as EOF and makes tokenization decisions immediately. By accumulating chunks before calling the lexer, we ensure Flex always has enough lookahead to correctly identify tokens. This works with **any chunk size** (1 byte to 64KB).
+
+**See also:** `fsp_test.c` (function `test_streaming_parser`) for a complete working example.
+
+## Streaming with Small Chunks
+
+libfsp supports streaming with arbitrarily small chunks when using the proper integration pattern:
+
+- ✅ **1-byte chunks**: Works correctly with buffer accumulation
+- ✅ **Any chunk size**: No minimum requirement
+- ✅ **Multi-line tokens**: Triple-quoted strings work across chunk boundaries
+- ✅ **Unlimited-length tokens**: Strings, URIs, comments of any size work correctly
+- ✅ **Performance**: Minimal overhead, O(1) amortized append
+
+### The Key Insight: Recognizing Delimiters vs. Holding Content
+
+**MIN_BUFFER_FOR_LEX only needs to be large enough for Flex to RECOGNIZE token delimiters, not to hold entire token content.**
+
+For example, with `MIN_BUFFER_FOR_LEX = 64`:
+
+- **Keywords**: Must fit in buffer (e.g., `"print"` = 5 bytes) ✓
+- **Operators**: Must fit in buffer (e.g., `"="` = 1 byte) ✓
+- **String delimiters**: Must fit in buffer (e.g., `"` or `"""` = 1-3 bytes) ✓
+- **String content**: Can be **megabytes** - Flex accumulates incrementally via `YY_INPUT` calls ✓
+
+Once Flex recognizes a string pattern has started (sees the opening `"`), it continues calling `YY_INPUT` and accumulating characters until it sees the closing delimiter. The string content itself doesn't need to fit in the buffer.
+
+The same applies to:
+- **URIs**: `<http://...>` - Only need `<` in buffer to start matching
+- **Comments**: `/* ... */` - Only need `/*` in buffer to start matching
+- **Multi-line strings**: `"""..."""` - Only need `"""` in buffer to enter start condition
+
+### Calculating MIN_BUFFER_FOR_LEX
+
+Set `MIN_BUFFER_FOR_LEX` to the length of your **longest fixed-length token** (typically keywords):
+
+```bash
+# Automatically calculate from your lexer file
+python3 scripts/calculate-min-buffer.py your_lexer.l
+```
+
+For most grammars:
+- **Minimum: 16 bytes** (safe for most keywords)
+- **Recommended: 64-256 bytes** (provides comfortable headroom)
+- **Never needs to be huge**: Even 256 bytes handles any realistic grammar
 
 ## Testing
 

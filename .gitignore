@@ -34,13 +34,6 @@ missing
 stamp-h1
 
 # Flex/Bison generated files
-*.tab.c
-*.tab.h
-*.yy.c
-*.yy.h
-lex.yy.c
-y.tab.c
-y.tab.h
 test_lexer.c
 test_lexer.h
 test_parser.c
@@ -59,3 +52,7 @@ fuzz_fsp_parse.o
 artifacts/
 
 autogen.sh
+
+# LLM
+/.claude/
+/.cursor/
