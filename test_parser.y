@@ -191,8 +191,9 @@ test_parser_reset(void)
 /* Non-terminal types */
 %type <string> expr
 
-/* Destructor for strings to avoid memory leaks */
-%destructor { free($$); } <string>
+/* Destructor for strings to avoid memory leaks on error or abort
+ * This should apply to all symbols with <string> type: STRING, IDENTIFIER, expr */
+%destructor { if($$) free($$); } <string>
 
 %%
 
