@@ -20,9 +20,6 @@
 
 # Whitespace
 " "
-"\t"
-"\n"
-"\r\n"
 
 # Special cases
 ""
