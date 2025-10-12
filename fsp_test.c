@@ -2,7 +2,7 @@
  *
  * fsp_test.c - Test program for libfsp
  *
- * Copyright (C) 2025, Dave Beckett http://www.dajobe.org/
+ * Copyright (C) 2025, Dave Beckett https://www.dajobe.org/
  * 
  * This package is Free Software
  * 

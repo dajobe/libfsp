@@ -8,7 +8,7 @@
  * - Identifiers and integers
  * - Triple-quoted strings test streaming across chunk boundaries
  *
- * Copyright (C) 2025, Dave Beckett http://www.dajobe.org/
+ * Copyright (C) 2025, Dave Beckett https://www.dajobe.org/
  * 
  * This package is Free Software
  * 

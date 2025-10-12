@@ -1,8 +1,8 @@
 /* -*- Mode: c; c-basic-offset: 2 -*-
  *
- * fsp.c - Implementation of libfsp
+ * fsp.c - Implementation of libfsp: Flex/Bison Streaming Parser Support Library
  *
- * Copyright (C) 2025, Dave Beckett http://www.dajobe.org/
+ * Copyright (C) 2025, Dave Beckett https://www.dajobe.org/
  * 
  * This package is Free Software
  * 

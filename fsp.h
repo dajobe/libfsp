@@ -2,7 +2,7 @@
  *
  * fsp.h - Header for libfsp (Flex/Bison Streaming Parser)
  *
- * Copyright (C) 2025, Dave Beckett http://www.dajobe.org/
+ * Copyright (C) 2025, Dave Beckett https://www.dajobe.org/
  * 
  * This package is Free Software
  * 
