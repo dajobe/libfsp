@@ -109,6 +109,26 @@ endif
 # Some people need a little help ;-)
 test: check
 
+# ------------------------------
+# Fuzzing support (Clang + libFuzzer)
+# ------------------------------
+# Note: Fuzzing requires GNUMakefile (not autoconf builds)
+# The GNUMakefile includes ARM64/x86_64 library paths for libstdc++:
+#   FUZZ_LDFLAGS = -fsanitize=fuzzer,address,undefined \
+#                  -L/usr/lib/aarch64-linux-gnu -L/usr/lib/x86_64-linux-gnu
+#
+# This is needed because libFuzzer runtime automatically links with -lstdc++
+# and the linker may not find it on ARM64 systems without explicit paths.
+
+.PHONY: fuzz-help
+
+fuzz-help:
+	@echo "Fuzzing targets (use GNUMakefile):"
+	@echo "  make -f GNUMakefile fuzz           - Build fuzzer"
+	@echo "  make -f GNUMakefile fuzz-parse-run - Run fuzzer"
+	@echo ""
+	@echo "See FUZZING.md for detailed instructions"
+
 help:
 	@echo "libfsp - Flex/Bison Streaming Parser library"
 	@echo ""
@@ -127,3 +147,5 @@ help:
 	@echo "Helper scripts:"
 	@echo "  scripts/postprocess-flex.py  - Post-process flex output"
 	@echo "  scripts/postprocess-bison.py - Post-process bison output"
+	@echo ""
+	@echo "For fuzzing instructions: make fuzz-help or see FUZZING.md"
