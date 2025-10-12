@@ -34,8 +34,16 @@
 #include "fsp.h"
 #include "fsp_internal.h"
 
+#ifndef FSP_DEFAULT_BUFFER_SIZE
 #define FSP_DEFAULT_BUFFER_SIZE (64 * 1024)  /* 64KB */
+#endif
 
+/**
+ * fsp_create - Create a new streaming parser context
+ *
+ * Returns:
+ *   A new fsp_context, or NULL if memory allocation fails
+ */
 fsp_context*
 fsp_create(void)
 {
@@ -60,6 +68,12 @@ fsp_create(void)
   return ctx;
 }
 
+
+/**
+ * fsp_destroy - Destroy a streaming parser context
+ *
+ * @ctx: The context to destroy
+ */
 void
 fsp_destroy(fsp_context *ctx)
 {
@@ -74,6 +88,16 @@ fsp_destroy(fsp_context *ctx)
   free(ctx);
 }
 
+
+/**
+ * fsp_read_input - Read input data from the context
+ *
+ * @user_data: User data pointer
+ * @buffer: Buffer to fill with data
+ * @max_size: Maximum bytes to read
+ *
+ * Returns: Number of bytes read, or 0 for EOF
+ */
 int
 fsp_read_input(void *user_data, char *buffer, size_t max_size)
 {
@@ -106,6 +130,16 @@ fsp_read_input(void *user_data, char *buffer, size_t max_size)
   return (int)to_copy;
 }
 
+
+/**
+ * fsp_buffer_append - Append data to the context's stream buffer
+ *
+ * @ctx: The context to append data to
+ * @data: The data to append
+ * @length: The length of the data to append
+ *
+ * Returns: 0 on success, -1 on failure
+ */
 int
 fsp_buffer_append(fsp_context *ctx, const char *data, size_t length)
 {
@@ -151,6 +185,12 @@ fsp_buffer_append(fsp_context *ctx, const char *data, size_t length)
   return 0;
 }
 
+
+/**
+ * fsp_buffer_compact - Compact the context's stream buffer
+ *
+ * @ctx: The context to compact
+ */
 void
 fsp_buffer_compact(fsp_context *ctx)
 {
@@ -170,6 +210,14 @@ fsp_buffer_compact(fsp_context *ctx)
   ctx->read_position = 0;
 }
 
+
+/**
+ * fsp_buffer_available - Get the number of available bytes in the context's stream buffer
+ *
+ * @ctx: The context to get the available bytes from
+ *
+ * Returns: The number of available bytes
+ */
 size_t
 fsp_buffer_available(fsp_context *ctx)
 {
@@ -179,6 +227,13 @@ fsp_buffer_available(fsp_context *ctx)
   return ctx->data_length - ctx->read_position;
 }
 
+
+/**
+ * fsp_set_user_data - Set the user data pointer for the context
+ *
+ * @ctx: The context to set the user data pointer for
+ * @user_data: The user data pointer to set
+ */
 void
 fsp_set_user_data(fsp_context *ctx, void *user_data)
 {
@@ -186,12 +241,31 @@ fsp_set_user_data(fsp_context *ctx, void *user_data)
     ctx->user_data = user_data;
 }
 
+
+/**
+ * fsp_get_user_data - Get the user data pointer for the context
+ *
+ * @ctx: The context to get the user data pointer from
+ *
+ * Returns: The user data pointer
+ */
 void*
 fsp_get_user_data(fsp_context *ctx)
 {
   return ctx ? ctx->user_data : NULL;
 }
 
+
+/**
+ * fsp_parse_chunk - Parse a chunk of input data
+ *
+ * @ctx: The context to parse the chunk in
+ * @chunk: The chunk of input data to parse
+ * @length: The length of the chunk of input data to parse
+ * @is_end: Whether this is the last chunk of input data
+ *
+ * Returns: A status code
+ */
 fsp_status
 fsp_parse_chunk(fsp_context *ctx, const char *chunk, size_t length, int is_end)
 {

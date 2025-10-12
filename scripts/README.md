@@ -17,57 +17,76 @@ generated lexer and parser code.
 
 ## Scripts
 
-### calculate-min-buffer.py
+### fsp-helper.py
 
-Analyzes a Flex lexer file (`.l`) and calculates the optimal `MIN_BUFFER_FOR_LEX` value needed for proper streaming integration.
+**Comprehensive utility for libfsp streaming parser integration.** Provides calculate, generate, validate, and check commands.
 
-**What it does:**
+**Type Safety:** Passes mypy strict type checking with full type hints.
 
-- Extracts all token patterns from the lexer rules section
-- Identifies fixed-length tokens (keywords, operators, delimiters)
-- Distinguishes variable-length tokens (strings, URIs, comments)
-- Calculates the longest fixed-length token
-- Recommends a `MIN_BUFFER_FOR_LEX` value with headroom
+#### Command: calculate
 
-**Key insight:** MIN_BUFFER_FOR_LEX only needs to be large enough for Flex to **recognize token delimiters**, not to hold entire token content. Variable-length tokens like strings and URIs accumulate incrementally once recognized.
-
-**Usage:**
+Calculates optimal MIN_BUFFER_FOR_LEX from lexer file.
 
 ```bash
-# Analyze a lexer file
-python3 calculate-min-buffer.py your_lexer.l
+python3 fsp-helper.py calculate your_lexer.l
+python3 fsp-helper.py calc -q your_lexer.l    # quiet mode
+python3 fsp-helper.py calc -v your_lexer.l    # verbose mode
+```
 
-# Quiet mode (numeric output only)
-python3 calculate-min-buffer.py -q your_lexer.l
+#### Command: generate
 
-# Verbose mode (show all patterns)
-python3 calculate-min-buffer.py -v your_lexer.l
+Generates customized streaming parser implementation.
+
+```bash
+python3 fsp-helper.py generate \\
+  --lexer-prefix turtle_lexer \\
+  --parser-prefix turtle_parser \\
+  --min-buffer 32 \\
+  -o turtle_streaming.c
+```
+
+#### Command: validate
+
+Validates lexer/parser streaming configuration.
+
+```bash
+python3 fsp-helper.py validate --lexer your_lexer.l --parser your_parser.y
+python3 fsp-helper.py val --lexer your_lexer.l --strict
+```
+
+Checks:
+- ✅ Required Flex options (%option reentrant, bison-bridge)
+- ✅ YY_INPUT calls fsp_read_input()
+- ✅ Bison push parser API (%define api.push-pull push, api.pure full)
+
+#### Command: check
+
+All-in-one: calculate + validate.
+
+```bash
+python3 fsp-helper.py check --lexer your_lexer.l --parser your_parser.y
 ```
 
 **Example output:**
-
 ```
-Analyzing sparql_lexer.l...
 ======================================================================
-Fixed-length patterns found: 146
-Variable-length patterns: 28
+STEP 1: Calculate MIN_BUFFER_FOR_LEX
+======================================================================
+Analyzing turtle_lexer.l...
+Longest fixed-length token: 14 bytes
+Recommended MIN_BUFFER_FOR_LEX: 32
 
-Longest fixed-length token:
-  Pattern: [Cc][Uu][Rr][Rr][Ee][Nn][Tt]_[Dd][Aa][Tt][Ee][Tt][Ii][Mm][Ee]
-  Length:  16 bytes
-  Description: pattern requires ~16 chars
+======================================================================
+STEP 2: Validate Configuration
+======================================================================
+✓ All checks passed
 
-Recommended MIN_BUFFER_FOR_LEX:
-  Minimum safe: 16 bytes (exact)
-  Recommended:  32 bytes (with headroom)
-
-#define MIN_BUFFER_FOR_LEX 32
+======================================================================
+SUMMARY
+======================================================================
+✓ Configuration is correct for streaming
+✓ Recommended MIN_BUFFER_FOR_LEX: 32
 ```
-
-**Tested on:**
-- libfsp test_lexer.l: 32 bytes (longest: "print" = 5 bytes)
-- Raptor turtle_lexer.l: 32 bytes (longest: pattern = 14 bytes)
-- Rasqal sparql_lexer.l: 32 bytes (longest: "CURRENT_DATETIME" = 16 bytes)
 
 ### postprocess-flex.py
 

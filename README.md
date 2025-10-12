@@ -21,17 +21,21 @@ The delivered library consists of:
 - **`fsp.h`** - Public API header
 - **`fsp_internal.h`** - Internal structures and C++ compatibility macros
 
-### Build Helper Scripts (3 files)
+### Build Helper Scripts (4 files)
 
 - **`scripts/postprocess-flex.py`** - Configurable post-processor for Flex output
 - **`scripts/postprocess-bison.py`** - Configurable post-processor for Bison output
-- **`scripts/README.md`** - Documentation for the postprocess scripts
+- **`scripts/fsp-helper.py`** - Integration utility (calculate, generate, validate, check)
+- **`scripts/README.md`** - Documentation for the scripts
 
-The core library provides pure C buffer management primitives. The postprocess
-scripts are **essential utilities** that host projects use with their own
-Flex/Bison parsers to ensure the generated code compiles **warning-free** at
-high warning levels (including `-Wall -Wextra -Werror`). They fix warnings,
-compatibility issues, and code quality problems in generated code.
+The core library provides pure C buffer management primitives. The helper scripts provide:
+
+- **postprocess-flex.py / postprocess-bison.py**: Fix warnings in generated code to ensure **warning-free** compilation at high warning levels (including `-Wall -Wextra -Werror`)
+- **fsp-helper.py**: Integration assistant with four commands:
+  - `calculate` - Analyze lexer and compute optimal MIN_BUFFER_FOR_LEX
+  - `generate` - Create customized streaming parser implementation
+  - `validate` - Verify lexer/parser are correctly configured for streaming
+  - `check` - All-in-one: calculate + validate
 
 ## What's for Testing Only
 
@@ -51,7 +55,8 @@ The test lexer and parser implement a simple toy language designed to exercise
 streaming parser capabilities, particularly for multi-line tokens:
 
 **Grammar:**
-```
+
+```text
 program ::= statement*
 statement ::= PRINT expression ';'
            | LET identifier '=' expression ';'
@@ -59,6 +64,7 @@ expression ::= string | identifier | integer
 ```
 
 **Example inputs:**
+
 ```c
 print "hello";
 let x = 42;
@@ -190,7 +196,23 @@ You can see this pattern demonstrated in:
 
 ## Example Usage
 
-See integration examples in Raptor and Rasqal.
+**Quick Start:**
+```bash
+# Validate your lexer/parser configuration
+python3 scripts/fsp-helper.py check --lexer your_lexer.l --parser your_parser.y
+
+# Generate streaming parser implementation
+python3 scripts/fsp-helper.py generate \
+  --lexer-prefix your_lexer \
+  --parser-prefix your_parser \
+  -o your_streaming.c
+```
+
+**Detailed Examples:**
+- [RAPTOR_INTEGRATION.md](RAPTOR_INTEGRATION.md) - Complete analysis of integrating libfsp into Raptor's Turtle parser
+- [fsp_test.c](fsp_test.c) - Working test implementation with 19 test cases
+- [Rasqal](https://github.com/dajobe/rasqal) - Production use with libsv integration
+- [Raptor](https://github.com/dajobe/raptor) - (integration in progress)
 
 ## API Overview
 
@@ -307,7 +329,11 @@ fsp_destroy(ctx);
 
 **Why buffer accumulation?** Flex interprets `YY_INPUT` returning 0 as EOF and makes tokenization decisions immediately. By accumulating chunks before calling the lexer, we ensure Flex always has enough lookahead to correctly identify tokens. This works with **any chunk size** (1 byte to 64KB).
 
-**See also:** `fsp_test.c` (function `test_streaming_parser`) for a complete working example.
+**See also:**
+
+- Complete implementation: [fsp_test.c](fsp_test.c) function `test_streaming_parser()` (lines 193-328)
+- Helper tool: [scripts/fsp-helper.py](scripts/fsp-helper.py) - Four commands for integration assistance
+- Integration guide: [RAPTOR_INTEGRATION.md](RAPTOR_INTEGRATION.md) - Real-world example with Raptor Turtle parser
 
 ## Streaming with Small Chunks
 
@@ -333,6 +359,7 @@ For example, with `MIN_BUFFER_FOR_LEX = 64`:
 Once Flex recognizes a string pattern has started (sees the opening `"`), it continues calling `YY_INPUT` and accumulating characters until it sees the closing delimiter. The string content itself doesn't need to fit in the buffer.
 
 The same applies to:
+
 - **URIs**: `<http://...>` - Only need `<` in buffer to start matching
 - **Comments**: `/* ... */` - Only need `/*` in buffer to start matching
 - **Multi-line strings**: `"""..."""` - Only need `"""` in buffer to enter start condition
@@ -343,13 +370,44 @@ Set `MIN_BUFFER_FOR_LEX` to the length of your **longest fixed-length token** (t
 
 ```bash
 # Automatically calculate from your lexer file
-python3 scripts/calculate-min-buffer.py your_lexer.l
+python3 scripts/fsp-helper.py calculate your_lexer.l
 ```
 
 For most grammars:
+
 - **Minimum: 16 bytes** (safe for most keywords)
 - **Recommended: 64-256 bytes** (provides comfortable headroom)
 - **Never needs to be huge**: Even 256 bytes handles any realistic grammar
+
+### Integration Validation and Code Generation
+
+Validate configuration and optionally generate streaming parser code:
+
+```bash
+# All-in-one: Calculate MIN_BUFFER and validate configuration
+python3 scripts/fsp-helper.py check --lexer your_lexer.l --parser your_parser.y
+
+# Just validate (no calculation)
+python3 scripts/fsp-helper.py validate --lexer your_lexer.l --parser your_parser.y
+
+# Generate streaming parser implementation
+python3 scripts/fsp-helper.py generate \\
+  --lexer-prefix your_lexer \\
+  --parser-prefix your_parser \\
+  --min-buffer 64 \\
+  -o your_streaming.c
+```
+
+The validator checks:
+
+- ✅ Lexer defines custom `YY_INPUT` calling `fsp_read_input()`
+- ✅ Lexer uses `%option reentrant` (required for push parser)
+- ✅ Lexer has `%option bison-bridge` (for yylval)
+- ✅ Parser uses `%define api.push-pull push`
+- ✅ Parser uses `%define api.pure full`
+- ✅ No conflicting options that break streaming
+
+The generator creates a complete streaming parser function customized for your lexer/parser, ready to use or adapt.
 
 ## Testing
 
@@ -393,11 +451,16 @@ libfsp/
 ├── scripts/
 │   ├── postprocess-flex.py    # Flex postprocessor [DELIVERED]
 │   ├── postprocess-bison.py   # Bison postprocessor [DELIVERED]
+│   ├── fsp-helper.py          # Integration utility [DELIVERED]
 │   └── README.md              # Script documentation [DELIVERED]
 │
 ├── fsp_test.c                 # Test suite [testing only]
 ├── test_lexer.l               # Example lexer [testing only]
 ├── test_parser.y              # Example parser [testing only]
+│
+├── RAPTOR_INTEGRATION.md      # Integration analysis example
+├── CLAUDE.md                  # Repository onboarding for AI assistants
+├── FUZZING.md                 # Fuzzing guide
 │
 ├── Makefile.am                # Automake build
 ├── GNUMakefile                # Standalone build
@@ -405,7 +468,7 @@ libfsp/
 └── README.md                  # This file
 ```
 
-**Summary:** The core library (3 files) and build helper scripts (3 files) are
+**Summary:** The core library (3 files) and build helper scripts (4 files) are
 delivered to host projects. Test files (fsp_test.c, test_lexer.l, test_parser.y)
 exist solely to validate that the library works correctly.
 
