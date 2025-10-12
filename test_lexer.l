@@ -148,12 +148,23 @@ WS       [ \t\r\n]+
 
 <LONG_STRING>.|\n {
     /* Accumulate characters in long string */
-    char *new_str = FSP_MALLOC(char*, strlen(yylval->string) + 2);
+    size_t old_len;
+    char *new_str;
+    
+    /* Guard against NULL string (can happen with streaming/chunked input) */
+    if(!yylval->string) {
+      yylval->string = strdup("");
+      if(!yylval->string)
+        return ERROR;
+    }
+    
+    old_len = strlen(yylval->string);
+    new_str = FSP_MALLOC(char*, old_len + 2);
     if(!new_str)
       return ERROR;
     strcpy(new_str, yylval->string);
-    new_str[strlen(yylval->string)] = yytext[0];
-    new_str[strlen(yylval->string) + 1] = '\0';
+    new_str[old_len] = yytext[0];
+    new_str[old_len + 1] = '\0';
     free(yylval->string);
     yylval->string = new_str;
 }
