@@ -2,7 +2,8 @@
 
 ## Requirements
 
-Fuzzing requires **LLVM Clang** with libFuzzer support (not available in Apple Clang on macOS).
+Fuzzing requires **LLVM Clang** with libFuzzer support (not available
+in Apple Clang on macOS).
 
 ### Linux
 
@@ -17,15 +18,27 @@ sudo dnf install clang
 
 ### macOS (via Homebrew)
 
+**IMPORTANT:** Apple Clang (macOS default) does **not** include
+libFuzzer support.
+
+You must install and use LLVM Clang from Homebrew:
+
 ```bash
 brew install llvm
-export PATH="/opt/homebrew/opt/llvm/bin:$PATH"  # or /usr/local/opt/llvm/bin for Intel
+
+# Add LLVM to PATH (use /usr/local for Intel Macs)
+export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+
+# Verify LLVM Clang is in PATH
+which clang
+# Should show: /opt/homebrew/opt/llvm/bin/clang
+
+clang --version
+# Should show: clang version X.X.X (not "Apple clang")
 ```
 
-Verify libFuzzer support:
-```bash
-clang -fsanitize=fuzzer 2>&1 | grep -q "requires a driver" && echo "libFuzzer available"
-```
+If you see "Apple clang", the system clang is still being used. Make
+sure LLVM's bin directory is first in your PATH.
 
 ## Building the Fuzzer
 
@@ -34,7 +47,8 @@ make -f GNUMakefile fuzz
 ```
 
 This builds:
-- `fuzz_fsp_parse` - Parser fuzzer with AddressSanitizer and UndefinedBehaviorSanitizer
+- `fuzz_fsp_parse` - Parser fuzzer with AddressSanitizer and
+  UndefinedBehaviorSanitizer
 
 The fuzzer is built with:
 - `-fsanitize=fuzzer` - libFuzzer instrumentation
@@ -102,7 +116,7 @@ This helps the fuzzer generate valid inputs faster.
 
 ### Success
 ```
-INFO: seed corpus: files: 5 ... 
+INFO: seed corpus: files: 5 ...
 #1024   pulse  cov: 89 ft: 123 ...
 #2048   pulse  cov: 91 ft: 128 ...
 Done 10000 runs in 60 seconds
