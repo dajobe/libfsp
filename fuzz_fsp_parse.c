@@ -134,7 +134,13 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       status = test_parser_push_parse(pstate, token, &lval, ctx, scanner);
 
       if(status != YYPUSH_MORE) {
-        /* Parser takes ownership of lval, so we don't free here */
+        /* Parser failed or completed. If it failed, it may not have consumed
+         * the token, so we need to free any string in lval. Bison push parser
+         * returns YYABORT (1) or YYACCEPT (0) but not YYPUSH_MORE (4) on error. */
+        if(status != 0 && lval.string) {
+          /* Parse error - free the unconsumed token */
+          free(lval.string);
+        }
         goto done;
       }
     }
