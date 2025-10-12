@@ -39,6 +39,7 @@ tests/long_string.txt \
 tests/long_string.expected \
 tests/missing_semicolon.txt \
 tests/unterminated_string.txt \
+tests/error_at_eof.txt \
 fuzz_fsp_parse.c \
 dicts/fsp.dict \
 corpus/parse/1_basic.txt \

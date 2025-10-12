@@ -319,15 +319,22 @@ done:
   test_lexer_lex_destroy(scanner);
   fsp_destroy(ctx);
 
-  if(status != 0)
+  if(status != 0) {
+    /* Free any partially parsed statements on error */
+    test_parser_free_statements();
     return -1;
+  }
 
   /* Validate result if expected file is provided */
   if(expected_file) {
     result = validate_parse_result(expected_file);
+    /* Free statements after validation */
+    test_parser_free_statements();
     return result;
   }
 
+  /* Free statements if no validation requested */
+  test_parser_free_statements();
   return 0;
 }
 
@@ -606,6 +613,49 @@ int main(int argc, char **argv)
       free(input);
       /* We expect this to fail parsing, but not crash */
       PASS();
+    } else {
+      FAIL("Could not read test file");
+    }
+  }
+
+  /* Test 20: Error at EOF with cleanup validation */
+  TEST("Error at EOF - validates cleanup (tests/error_at_eof.txt)");
+  {
+    char *input;
+    size_t length;
+    int result;
+    statement_node *stmts_before;
+    statement_node *stmts_after;
+    
+    input = read_file("tests/error_at_eof.txt", &length);
+    if(input) {
+      /* Reset parser state */
+      test_parser_reset();
+      
+      /* Verify no statements exist before parsing */
+      stmts_before = test_parser_get_statements();
+      if(stmts_before != NULL) {
+        FAIL("Statements exist before parsing");
+        free(input);
+      } else {
+        /* Should detect error at EOF */
+        result = test_streaming_parser(input, 1024, NULL);
+        free(input);
+        
+        /* Verify error was detected */
+        if(result >= 0) {
+          FAIL("Expected parse error was not detected");
+        } else {
+          /* Verify statements were cleaned up after error */
+          stmts_after = test_parser_get_statements();
+          if(stmts_after != NULL) {
+            FAIL("Statements not cleaned up after error");
+          } else {
+            /* Error detected and cleaned up properly */
+            PASS();
+          }
+        }
+      }
     } else {
       FAIL("Could not read test file");
     }

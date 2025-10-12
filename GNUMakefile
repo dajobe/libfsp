@@ -40,6 +40,7 @@ tests/mixed.txt tests/mixed.expected \
 tests/empty.txt tests/empty.expected \
 tests/long_string.txt tests/long_string.expected \
 tests/missing_semicolon.txt tests/unterminated_string.txt \
+tests/error_at_eof.txt \
 fuzz_fsp_parse.c dicts/fsp.dict FUZZING.md
 
 PACKAGE=libfsp
