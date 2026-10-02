@@ -34,8 +34,12 @@
 
 /* Define YYSTYPE for lexer header */
 #define YYSTYPE TEST_PARSER_STYPE
+#define YYLTYPE TEST_PARSER_LTYPE
 
 #include "test_lexer.h"
+
+int test_generated_parse(fsp_context *ctx, const char *input,
+                         size_t chunk_size, void *user_data);
 
 static int test_count = 0;
 static int test_failed = 0;
@@ -51,8 +55,20 @@ read_file(const char *filename, size_t *length)
   char *content;
   size_t file_size;
   size_t bytes_read;
+  const char *srcdir = getenv("srcdir");
 
-  fp = fopen(filename, "rb");
+  /* Automake supplies srcdir when tests run outside the source tree. */
+  if(srcdir && *srcdir) {
+    size_t path_size = strlen(srcdir) + strlen(filename) + 2;
+    char *path = (char*)malloc(path_size);
+    if(!path)
+      return NULL;
+    snprintf(path, path_size, "%s/%s", srcdir, filename);
+    fp = fopen(path, "rb");
+    free(path);
+  } else {
+    fp = fopen(filename, "rb");
+  }
   if(!fp)
     return NULL;
 
@@ -198,13 +214,18 @@ validate_parse_result(const char *expected_file)
  * Returns 0 on success, -1 on error
  */
 static int
-run_streaming_parser(const char *input, size_t input_len, size_t chunk_size)
+run_streaming_parser_plan(const char *input, size_t input_len,
+                          size_t chunk_size, const size_t *chunk_plan,
+                          size_t chunk_count, int separate_eof)
 {
   fsp_context *ctx;
   yyscan_t scanner;
   test_parser_pstate *pstate;
+  TEST_PARSER_LTYPE eof_loc;
   int status = 0;
+  int eof_sent = 0;
   size_t pos = 0;
+  size_t chunk_index = 0;
 
   /* Reset parser state before test */
   test_parser_reset();
@@ -233,35 +254,64 @@ run_streaming_parser(const char *input, size_t input_len, size_t chunk_size)
 
   /* Enable rewind support before the first token */
   test_lexer_fsp_commit(scanner);
+  memset(&eof_loc, 0, sizeof(eof_loc));
 
   while(1) {
     /* Append the next chunk, if any */
-    if(pos < input_len) {
+    if(pos < input_len || (chunk_plan && chunk_index < chunk_count)) {
       size_t chunk;
+      int is_end;
+      fsp_status chunk_status;
 
-      chunk = input_len - pos;
-      if(chunk > chunk_size)
-        chunk = chunk_size;
+      if(chunk_plan) {
+        if(chunk_index >= chunk_count) {
+          status = 1;
+          goto done;
+        }
+        chunk = chunk_plan[chunk_index++];
+      } else {
+        chunk = input_len - pos;
+        if(chunk > chunk_size)
+          chunk = chunk_size;
+      }
 
-      if(fsp_buffer_append(ctx, input + pos, chunk) < 0) {
+      if(chunk > input_len - pos) {
         status = 1;
         goto done;
       }
 
+      is_end = (pos + chunk >= input_len && !separate_eof);
+      chunk_status = fsp_parse_chunk(ctx, chunk ? input + pos : NULL,
+                                     chunk, is_end);
+      if((is_end && chunk_status != FSP_STATUS_OK) ||
+         (!is_end && chunk_status != FSP_STATUS_NEED_DATA)) {
+        status = 1;
+        goto done;
+      }
+      if(is_end)
+        eof_sent = 1;
       pos += chunk;
-    }
 
-    /* Signal EOF to FSP context after the last chunk */
-    if(pos >= input_len)
-      ctx->more_chunks_expected = 0;
+    } else if(pos < input_len) {
+      status = 1;
+      goto done;
+    } else if(!eof_sent) {
+      if(fsp_parse_chunk(ctx, NULL, 0, 1) != FSP_STATUS_OK) {
+        status = 1;
+        goto done;
+      }
+      eof_sent = 1;
+    }
 
     /* Lex and parse until the lexer needs more input or the end */
     while(1) {
       TEST_PARSER_STYPE lval;
+      TEST_PARSER_LTYPE lloc;
       int token;
 
       lval.string = NULL;
-      token = test_lexer_lex(&lval, scanner);
+      memset(&lloc, 0, sizeof(lloc));
+      token = test_lexer_lex(&lval, &lloc, scanner);
 
       if(token == FSP_LEXER_NEED_MORE ||
          (!token && fsp_input_would_block(ctx))) {
@@ -284,13 +334,14 @@ run_streaming_parser(const char *input, size_t input_len, size_t chunk_size)
       if(token == ERROR) {
         /* Push EOF so the parser aborts and frees the values on its
          * stack, which deleting the parser state does not do */
-        (void)test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
+        (void)test_parser_push_parse(pstate, 0, NULL, &lloc, ctx, scanner);
         status = 1;
         goto done;
       }
 
       /* Push token to parser */
-      status = test_parser_push_parse(pstate, token, &lval, ctx, scanner);
+      status = test_parser_push_parse(pstate, token, &lval, &lloc,
+                                      ctx, scanner);
 
       if(status != YYPUSH_MORE) {
         /* Parse complete or error */
@@ -301,7 +352,7 @@ run_streaming_parser(const char *input, size_t input_len, size_t chunk_size)
 
 eof:
   /* Push final EOF to parser */
-  status = test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
+  status = test_parser_push_parse(pstate, 0, NULL, &eof_loc, ctx, scanner);
 
 done:
   last_lineno = test_lexer_get_lineno(scanner);
@@ -316,6 +367,14 @@ done:
   }
 
   return 0;
+}
+
+
+static int
+run_streaming_parser(const char *input, size_t input_len, size_t chunk_size)
+{
+  return run_streaming_parser_plan(input, input_len, chunk_size,
+                                   NULL, 0, 0);
 }
 
 
@@ -575,19 +634,30 @@ int main(int argc, char **argv)
     PASS();
   }
 
-  /* Test 17: Malformed input - missing semicolon (should not crash) */
+  /* Test 17: Malformed input - missing semicolon */
   TEST("Malformed input - missing semicolon (tests/missing_semicolon.txt)");
   {
     char *input;
     size_t length;
+    size_t chunk_size;
+    int failures = 0;
 
     input = read_file("tests/missing_semicolon.txt", &length);
     if(input) {
-      /* Should handle error gracefully, not crash */
-      (void)test_streaming_parser(input, 1024, NULL);
+      test_parser_set_quiet(1);
+      for(chunk_size = 1; chunk_size <= length + 1; chunk_size++) {
+        if(test_streaming_parser(input, chunk_size, NULL) == 0) {
+          fprintf(stderr, "\n  Accepted malformed input with %zu-byte chunks",
+                  chunk_size);
+          failures++;
+        }
+      }
+      test_parser_set_quiet(0);
       free(input);
-      /* We expect this to fail parsing, but not crash */
-      PASS();
+      if(failures)
+        FAIL("Missing-semicolon input was accepted");
+      else
+        PASS();
     } else {
       FAIL("Could not read test file");
     }
@@ -601,19 +671,30 @@ int main(int argc, char **argv)
     PASS();
   }
 
-  /* Test 19: Malformed input - unterminated string (should not crash) */
+  /* Test 19: Malformed input - unterminated string */
   TEST("Malformed input - unterminated string (tests/unterminated_string.txt)");
   {
     char *input;
     size_t length;
+    size_t chunk_size;
+    int failures = 0;
 
     input = read_file("tests/unterminated_string.txt", &length);
     if(input) {
-      /* Should handle error gracefully, not crash */
-      (void)test_streaming_parser(input, 1024, NULL);
+      test_parser_set_quiet(1);
+      for(chunk_size = 1; chunk_size <= length + 1; chunk_size++) {
+        if(test_streaming_parser(input, chunk_size, NULL) == 0) {
+          fprintf(stderr, "\n  Accepted malformed input with %zu-byte chunks",
+                  chunk_size);
+          failures++;
+        }
+      }
+      test_parser_set_quiet(0);
       free(input);
-      /* We expect this to fail parsing, but not crash */
-      PASS();
+      if(failures)
+        FAIL("Unterminated string input was accepted");
+      else
+        PASS();
     } else {
       FAIL("Could not read test file");
     }
@@ -828,11 +909,11 @@ int main(int argc, char **argv)
     }
   }
 
-  /* Test 24: Long string bigger than the lexer's buffers */
-  TEST("Long string larger than the lexer buffer");
+  /* Test 24: Long string bigger than the lexer and FSP buffers */
+  TEST("Long string larger than the default FSP buffer");
   {
     static const size_t chunk_sizes[] = { 1000, 4096, 8192, 65536 };
-    const size_t string_len = 40000;
+    const size_t string_len = 150 * 1024;
     const char *prefix = "print \"\"\"";
     const char *suffix = "\"\"\";\nprint \"after\";\n";
     char *input;
@@ -906,6 +987,360 @@ int main(int argc, char **argv)
     } else {
       PASS();
     }
+  }
+
+  /* Test 26: Public chunk API status and EOF sequences */
+  TEST("fsp_parse_chunk status and EOF sequences");
+  {
+    int ok = 1;
+
+    ctx = fsp_create();
+    if(!ctx) {
+      FAIL("Failed to create FSP context");
+    } else {
+      if(fsp_parse_chunk(ctx, "last", 4, 1) != FSP_STATUS_OK ||
+         ctx->more_chunks_expected || fsp_buffer_available(ctx) != 4)
+        ok = 0;
+      fsp_destroy(ctx);
+
+      ctx = fsp_create();
+      if(!ctx) {
+        ok = 0;
+      } else {
+        if(fsp_parse_chunk(ctx, "part", 4, 0) != FSP_STATUS_NEED_DATA ||
+           !ctx->more_chunks_expected ||
+           fsp_parse_chunk(ctx, NULL, 0, 1) != FSP_STATUS_OK ||
+           ctx->more_chunks_expected || fsp_buffer_available(ctx) != 4)
+          ok = 0;
+        fsp_destroy(ctx);
+      }
+
+      ctx = fsp_create();
+      if(!ctx) {
+        ok = 0;
+      } else {
+        fsp_buffer_commit(ctx, 0, NULL);
+        if(fsp_parse_chunk(ctx, "abc", 3, 0) != FSP_STATUS_NEED_DATA ||
+           fsp_read_input(ctx, buffer, sizeof(buffer)) != 3 ||
+           fsp_read_input(ctx, buffer, sizeof(buffer)) != 0 ||
+           !fsp_input_would_block(ctx))
+          ok = 0;
+        fsp_buffer_rewind(ctx, NULL);
+        if(fsp_parse_chunk(ctx, "def", 3, 1) != FSP_STATUS_OK ||
+           ctx->more_chunks_expected ||
+           fsp_read_input(ctx, buffer, 6) != 6 ||
+           memcmp(buffer, "abcdef", 6) != 0 ||
+           fsp_input_would_block(ctx))
+          ok = 0;
+        fsp_destroy(ctx);
+      }
+
+      if(ok)
+        PASS();
+      else
+        FAIL("fsp_parse_chunk returned unexpected status or EOF state");
+    }
+  }
+
+  /* Test 27: Compile and execute fsp-helper.py generated parser code */
+  TEST("Generated streaming parser parses one-byte chunks");
+  {
+    int result;
+    statement_node *stmt;
+
+    test_parser_reset();
+    ctx = fsp_create();
+    if(!ctx) {
+      FAIL("Failed to create FSP context");
+    } else {
+      result = test_generated_parse(ctx, "print \"generated\";\n", 1, NULL);
+      stmt = test_parser_get_statements();
+      if(result || !stmt || stmt->type != STMT_PRINT || !stmt->value ||
+         strcmp(stmt->value, "generated") || stmt->next) {
+        FAIL("Generated streaming parser returned unexpected output");
+      } else {
+        PASS();
+      }
+      test_parser_free_statements();
+      fsp_destroy(ctx);
+    }
+  }
+
+  /* Test 28: Uneven chunks, empty chunks, and separate EOF notification */
+  TEST("Irregular chunk partitions match whole-input parsing");
+  {
+    static const size_t patterns[][7] = {
+      { 3, 0, 1, 5, 2, 0, 7 },
+      { 2, 0, 9, 1, 0, 4, 3 }
+    };
+    static const char * const files[][2] = {
+      { "tests/mixed.txt", "tests/mixed.expected" },
+      { "tests/triple-quoted.txt", "tests/triple-quoted.expected" }
+    };
+    size_t f;
+    int failures = 0;
+
+    for(f = 0; f < sizeof(files) / sizeof(files[0]); f++) {
+      char *input;
+      size_t input_len;
+      size_t pattern_index;
+      size_t whole_lineno;
+
+      input = read_file(files[f][0], &input_len);
+      if(!input) {
+        failures++;
+        continue;
+      }
+      if(run_streaming_parser(input, input_len, input_len + 1) < 0) {
+        failures++;
+        free(input);
+        continue;
+      }
+      whole_lineno = last_lineno;
+      test_parser_free_statements();
+
+      for(pattern_index = 0; pattern_index < 2; pattern_index++) {
+        const size_t *pattern;
+        size_t pattern_len = 7;
+        size_t *plan;
+        size_t plan_capacity;
+        size_t plan_count = 0;
+        size_t plan_pos = 0;
+        size_t input_pos = 0;
+
+        pattern = patterns[pattern_index];
+        plan_capacity = (input_len + 1) * 2;
+        plan = (size_t*)malloc(plan_capacity * sizeof(size_t));
+        if(!plan) {
+          failures++;
+          continue;
+        }
+
+        while(input_pos < input_len) {
+          size_t chunk = pattern[plan_pos++ % pattern_len];
+          if(chunk > input_len - input_pos)
+            chunk = input_len - input_pos;
+          plan[plan_count++] = chunk;
+          input_pos += chunk;
+        }
+
+        if(run_streaming_parser_plan(input, input_len, 1, plan, plan_count,
+                                     1) < 0 ||
+           validate_parse_result(files[f][1]) < 0 ||
+           last_lineno != (int)whole_lineno) {
+          fprintf(stderr, "\n  %s failed for irregular partition %zu",
+                  files[f][0], pattern_index + 1);
+          failures++;
+        }
+        test_parser_free_statements();
+        free(plan);
+      }
+      free(input);
+    }
+
+    if(failures)
+      FAIL("Irregular streaming differed from whole-input parsing");
+    else
+      PASS();
+  }
+
+  /* Test 29: Flex yymore() and exclusive-state EOF actions */
+  TEST("yymore and custom EOF rules survive chunking");
+  {
+    const char *input = "print joined;\n";
+    size_t chunk_size;
+    int failures = 0;
+
+    test_parser_set_quiet(1);
+    for(chunk_size = 1; chunk_size <= strlen(input) + 1; chunk_size++) {
+      statement_node *stmt;
+      if(run_streaming_parser(input, strlen(input), chunk_size) < 0) {
+        failures++;
+        continue;
+      }
+      stmt = test_parser_get_statements();
+      if(!stmt || !stmt->value || strcmp(stmt->value, "joined") ||
+         stmt->next)
+        failures++;
+      test_parser_free_statements();
+    }
+    test_parser_set_quiet(0);
+
+    if(failures)
+      FAIL("Flex rule actions changed under chunking");
+    else
+      PASS();
+  }
+
+  /* Test 30: The generated rewind hook restores the Flex column state */
+  TEST("Rewind restores the committed Flex column");
+  {
+    int ok = 1;
+    TEST_PARSER_STYPE lval;
+    TEST_PARSER_LTYPE lloc;
+    yyscan_t scanner;
+
+    ctx = fsp_create();
+    if(!ctx || test_lexer_lex_init(&scanner)) {
+      FAIL("Failed to initialize lexer for column restoration");
+      fsp_destroy(ctx);
+    } else {
+      test_lexer_set_extra(ctx, scanner);
+      test_lexer_fsp_commit(scanner);
+      if(fsp_parse_chunk(ctx, " ", 1, 0) != FSP_STATUS_NEED_DATA)
+        ok = 0;
+      memset(&lval, 0, sizeof(lval));
+      memset(&lloc, 0, sizeof(lloc));
+      if(test_lexer_lex(&lval, &lloc, scanner) != FSP_LEXER_NEED_MORE)
+        ok = 0;
+      free(lval.string);
+      test_lexer_fsp_rewind(scanner);
+      test_lexer_set_column(7, scanner);
+      test_lexer_fsp_commit(scanner);
+      if(fsp_parse_chunk(ctx, "\"\"\"partial", 10, 0) !=
+         FSP_STATUS_NEED_DATA)
+        ok = 0;
+      memset(&lval, 0, sizeof(lval));
+      memset(&lloc, 0, sizeof(lloc));
+      if(test_lexer_lex(&lval, &lloc, scanner) != FSP_LEXER_NEED_MORE)
+        ok = 0;
+      free(lval.string);
+      test_lexer_set_column(99, scanner);
+      test_lexer_fsp_rewind(scanner);
+      if(test_lexer_get_column(scanner) != 7)
+        ok = 0;
+      test_lexer_lex_destroy(scanner);
+      fsp_destroy(ctx);
+      if(ok)
+        PASS();
+      else
+        FAIL("Lexer column changed across rewind");
+    }
+  }
+
+  /* Test 31: Token locations agree for whole and chunked input */
+  TEST("Statement, identifier, and value locations survive chunking");
+  {
+    const char *input = "print \"x\";\nlet y = 2;\n";
+    size_t chunk_size;
+    int failures = 0;
+
+    for(chunk_size = 1; chunk_size <= strlen(input) + 1; chunk_size++) {
+      statement_node *stmt;
+      if(run_streaming_parser(input, strlen(input), chunk_size) < 0) {
+        failures++;
+        continue;
+      }
+
+      stmt = test_parser_get_statements();
+      if(!stmt || stmt->line != 1 || stmt->column != 0 ||
+         stmt->value_line != 1 || stmt->value_column != 6 ||
+         !stmt->next || stmt->next->line != 2 || stmt->next->column != 0 ||
+         stmt->next->identifier_line != 2 ||
+         stmt->next->identifier_column != 4 ||
+         stmt->next->value_line != 2 || stmt->next->value_column != 8 ||
+         stmt->next->next) {
+        fprintf(stderr, "\n  Wrong token locations with %zu-byte chunks",
+                chunk_size);
+        failures++;
+      }
+      test_parser_free_statements();
+    }
+
+    if(failures)
+      FAIL("Token locations differed across chunk boundaries");
+    else
+      PASS();
+  }
+
+  /* Test 32: Binary bytes remain intact across compaction and growth */
+  TEST("Binary buffers survive repeated compaction and growth independently");
+  {
+    const size_t total = 180 * 1024;
+    const size_t first = 60 * 1024;
+    const size_t consumed1 = 10 * 1024;
+    const size_t consumed2 = 20 * 1024;
+    char *source;
+    char *alternate;
+    char *readback1;
+    char *readback2;
+    size_t i;
+    size_t offset = 0;
+    int ok = 1;
+    fsp_context *ctx1;
+    fsp_context *ctx2;
+
+    source = (char*)malloc(total);
+    alternate = (char*)malloc(total);
+    readback1 = (char*)malloc(total - consumed1 - consumed2);
+    readback2 = (char*)malloc(total - consumed1 - consumed2);
+    ctx1 = fsp_create();
+    ctx2 = fsp_create();
+    if(!source || !alternate || !readback1 || !readback2 || !ctx1 || !ctx2) {
+      FAIL("Failed to allocate independent binary buffer test state");
+    } else {
+      for(i = 0; i < total; i++) {
+        source[i] = (char)(i & 0xff);
+        alternate[i] = (char)((i ^ 0xa5) & 0xff);
+      }
+
+      if(fsp_buffer_append(ctx1, source, first) < 0 ||
+         fsp_buffer_append(ctx2, alternate, first) < 0)
+        ok = 0;
+      for(i = 0; i < consumed1; i += sizeof(buffer)) {
+        size_t count = consumed1 - i;
+        if(count > sizeof(buffer))
+          count = sizeof(buffer);
+        if(fsp_read_input(ctx1, buffer, count) != (int)count ||
+           memcmp(buffer, source + i, count) != 0 ||
+           fsp_read_input(ctx2, buffer, count) != (int)count ||
+           memcmp(buffer, alternate + i, count) != 0)
+          ok = 0;
+      }
+      fsp_buffer_compact(ctx1);
+      fsp_buffer_compact(ctx2);
+      if(fsp_buffer_append(ctx1, source + first, total - first) < 0 ||
+         fsp_buffer_append(ctx2, alternate + first, total - first) < 0)
+        ok = 0;
+      for(i = 0; i < consumed2; i += sizeof(buffer)) {
+        size_t count = consumed2 - i;
+        if(count > sizeof(buffer))
+          count = sizeof(buffer);
+        if(fsp_read_input(ctx1, buffer, count) != (int)count ||
+           memcmp(buffer, source + consumed1 + i, count) != 0 ||
+           fsp_read_input(ctx2, buffer, count) != (int)count ||
+           memcmp(buffer, alternate + consumed1 + i, count) != 0)
+          ok = 0;
+      }
+      fsp_buffer_compact(ctx1);
+      fsp_buffer_compact(ctx2);
+
+      while(offset < total - consumed1 - consumed2) {
+        size_t count = fsp_read_input(ctx1, readback1 + offset,
+                                      total - consumed1 - consumed2 - offset);
+        if(fsp_read_input(ctx2, readback2 + offset, count) != (int)count)
+          ok = 0;
+        if(!count)
+          break;
+        offset += count;
+      }
+      if(offset != total - consumed1 - consumed2 ||
+         memcmp(readback1, source + consumed1 + consumed2, offset) != 0 ||
+         memcmp(readback2, alternate + consumed1 + consumed2, offset) != 0 ||
+         fsp_buffer_available(ctx2) != 0)
+        ok = 0;
+
+      if(ok)
+        PASS();
+      else
+        FAIL("Compaction or growth changed binary buffer contents");
+    }
+    free(source);
+    free(alternate);
+    free(readback1);
+    free(readback2);
+    fsp_destroy(ctx1);
+    fsp_destroy(ctx2);
   }
 
   /* Summary */

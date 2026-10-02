@@ -3,7 +3,7 @@ AC_INIT([libfsp], [0.1.0], [https://github.com/dajobe/libfsp/issues])
 AC_CONFIG_SRCDIR([fsp.c])
 AC_CONFIG_AUX_DIR(build)
 AC_CONFIG_MACRO_DIR(build)
-AM_INIT_AUTOMAKE([1.11 foreign])
+AM_INIT_AUTOMAKE([1.11 foreign subdir-objects])
 AC_CONFIG_HEADERS([fsp_config.h])
 
 dnl Checks for programs
@@ -11,6 +11,7 @@ AC_CANONICAL_HOST
 AM_SANITY_CHECK
 AM_PROG_AR
 AC_PROG_CC
+AC_PROG_CXX
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AM_PROG_CC_C_O
@@ -43,7 +44,8 @@ AC_DEFUN([FSP_CC_TRY_FLAG], [
   AC_LANG_WERROR
 
   CFLAGS="$CFLAGS $1"
-  AC_COMPILE_IFELSE([AC_LANG_SOURCE([ ])], [fsp_cc_flag=yes], [fsp_cc_flag=no])
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [return 0;])],
+    [fsp_cc_flag=yes], [fsp_cc_flag=no])
 
   dnl restore CFLAGS and werror status
   CFLAGS="$fsp_save_CFLAGS"
@@ -157,10 +159,9 @@ fi
 
 if test "$USE_MAINTAINER_MODE" = yes; then
   AC_DEFINE([MAINTAINER_MODE], [1], [Define to 1 if maintainer mode is enabled.])
-  CPPFLAGS="$warning_cflags $CPPFLAGS"
 fi
-dnl Extra compiler flags to always add
-CPPFLAGS="$extra_compiler_cflags $CPPFLAGS"
+dnl Keep C-only flags out of C++ builds and configure's feature probes.
+AC_SUBST([WARN_CFLAGS], ["$warning_cflags $extra_compiler_cflags"])
 
 dnl Flex detection (borrowed from Raptor)
 FLEX_MIN_VERSION=2.5.19
@@ -242,9 +243,8 @@ AC_CHECK_PROGS(PYTHON3, python3 python)
 dnl Checks for header files
 AC_CHECK_HEADERS([stdlib.h string.h])
 
-dnl Checks for typedefs, structures, and compiler characteristics
-AC_C_CONST
-AC_C_INLINE
+dnl The library requires C99 or newer, which provides const and inline.
+dnl Legacy probes can incorrectly redefine these keywords under -Werror.
 
 dnl Checks for library functions
 AC_CHECK_FUNCS([memmove memcpy strdup])

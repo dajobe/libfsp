@@ -30,10 +30,18 @@
 #include "fsp.h"
 
 /* Memory allocation macros with type casts for C++ compatibility */
+#ifdef FSP_TESTING
+#include "tests/fsp_test_alloc.h"
+#define FSP_MALLOC(type, size) (type)fsp_test_malloc(size)
+#define FSP_CALLOC(type, nmemb, size) (type)fsp_test_calloc(nmemb, size)
+#define FSP_REALLOC(type, ptr, size) (type)fsp_test_realloc(ptr, size)
+#define FSP_FREE(type, ptr) fsp_test_free((void*)ptr)
+#else
 #define FSP_MALLOC(type, size) (type)malloc(size)
 #define FSP_CALLOC(type, nmemb, size) (type)calloc(nmemb, size)
 #define FSP_REALLOC(type, ptr, size) (type)realloc(ptr, size)
 #define FSP_FREE(type, ptr) free((void*)ptr)
+#endif
 
 struct fsp_context_s {
   /* Bison push parser state (to be set by host) */
@@ -67,4 +75,3 @@ struct fsp_context_s {
 int fsp_buffer_grow(fsp_context *ctx, size_t needed);
 
 #endif /* FSP_INTERNAL_H */
-

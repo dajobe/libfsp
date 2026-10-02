@@ -31,92 +31,110 @@
 
 /* Define YYSTYPE for lexer header */
 #define YYSTYPE TEST_PARSER_STYPE
+#define YYLTYPE TEST_PARSER_LTYPE
 #include "test_lexer.h"
 
-int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+typedef struct {
+  int valid;
+  int accepted;
+  int final_line;
+  uint64_t ast_hash;
+} fuzz_snapshot;
+
+static uint64_t
+hash_ast(void)
+{
+  const uint64_t prime = UINT64_C(1099511628211);
+  uint64_t hash = UINT64_C(1469598103934665603);
+  statement_node *stmt = test_parser_get_statements();
+
+  while(stmt) {
+    const unsigned char *text;
+
+    hash = (hash ^ (uint64_t)stmt->type) * prime;
+    hash = (hash ^ (uint64_t)stmt->line) * prime;
+    hash = (hash ^ (uint64_t)stmt->column) * prime;
+    hash = (hash ^ (uint64_t)stmt->identifier_line) * prime;
+    hash = (hash ^ (uint64_t)stmt->identifier_column) * prime;
+    hash = (hash ^ (uint64_t)stmt->value_line) * prime;
+    hash = (hash ^ (uint64_t)stmt->value_column) * prime;
+    for(text = (const unsigned char*)stmt->identifier; text && *text; text++)
+      hash = (hash ^ *text) * prime;
+    hash = (hash ^ UINT64_C(0xff)) * prime;
+    for(text = (const unsigned char*)stmt->value; text && *text; text++)
+      hash = (hash ^ *text) * prime;
+    hash = (hash ^ UINT64_C(0xfe)) * prime;
+    stmt = stmt->next;
+  }
+  return hash;
+}
+
+static int
+run_parse_case(const uint8_t *data, size_t size, size_t chunk_base,
+               int whole_input, fuzz_snapshot *snapshot)
+{
   fsp_context *ctx;
   yyscan_t scanner;
   test_parser_pstate *pstate;
-  const uint8_t *p;
+  TEST_PARSER_LTYPE eof_loc;
+  const uint8_t *p = data;
   size_t remain;
-  size_t chunk_base;
   int status;
+  int parse_status = 1;
 
-  if (!data || size == 0)
-    return 0;
-
-  /* Suppress parse error messages during fuzzing */
+  snapshot->valid = 0;
+  snapshot->accepted = 0;
+  snapshot->final_line = 0;
+  snapshot->ast_hash = 0;
   test_parser_set_quiet(1);
-
-  /* Reset parser state */
   test_parser_reset();
-
-  /* Create FSP context */
   ctx = fsp_create();
   if(!ctx)
-    return 0;
-
-  /* Initialize lexer */
+    return -1;
   if(test_lexer_lex_init(&scanner)) {
     fsp_destroy(ctx);
-    return 0;
+    return -1;
   }
-
-  /* Set FSP context as extra data for lexer */
   test_lexer_set_extra(ctx, scanner);
-
-  /* Create push parser state */
   pstate = test_parser_pstate_new();
   if(!pstate) {
     test_lexer_lex_destroy(scanner);
     fsp_destroy(ctx);
-    return 0;
+    return -1;
   }
 
-  /* Derive chunk size from first byte (1-64 bytes)
-   * This tests various token boundary conditions */
-  chunk_base = (size > 0) ? ((size_t)data[0] % 64) + 1 : 16;
-  
-  /* Enable rewind support before the first token */
   test_lexer_fsp_commit(scanner);
-
-  /* Start feeding from second byte */
-  p = (size > 1) ? data + 1 : data;
-  remain = (size > 1) ? size - 1 : 0;
-
-  /* Feed input in varying chunks to stress streaming */
+  memset(&eof_loc, 0, sizeof(eof_loc));
+  remain = size;
   while(remain > 0) {
     size_t chunk;
     size_t vary;
     int is_end;
-    
-    /* Vary chunk size slightly to hit different boundary conditions */
-    vary = (remain > 2 && p[0] > 0) ? (p[0] % 8) : 0;
-    chunk = chunk_base + vary;
-    if(chunk > remain)
+
+    if(whole_input) {
       chunk = remain;
+    } else {
+      vary = (remain > 2 && p[0] > 0) ? (p[0] % 8) : 0;
+      chunk = chunk_base + vary;
+      if(chunk > remain)
+        chunk = remain;
+    }
 
     is_end = (chunk >= remain);
-
-    /* Append chunk to FSP buffer, signalling EOF after the last chunk */
     if(fsp_parse_chunk(ctx, (const char*)p, chunk, is_end) == FSP_STATUS_NO_MEMORY)
       break;
 
-    /* Feed tokens to parser until the lexer needs more input */
     while(1) {
       TEST_PARSER_STYPE lval;
+      TEST_PARSER_LTYPE lloc;
       int token;
 
-      /* Initialize lval to avoid using uninitialized memory */
       memset(&lval, 0, sizeof(lval));
-
-      /* Get next token from lexer */
-      token = test_lexer_lex(&lval, scanner);
+      memset(&lloc, 0, sizeof(lloc));
+      token = test_lexer_lex(&lval, &lloc, scanner);
 
       if(token == FSP_LEXER_NEED_MORE ||
          (!token && fsp_input_would_block(ctx))) {
-        /* Input ran out, possibly inside a token: discard any partial
-         * string and rescan from the last token after the next chunk */
         if(lval.string) {
           free(lval.string);
           lval.string = NULL;
@@ -126,41 +144,37 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       }
 
       if(token == 0) {
-        /* No more tokens available */
-        /* Free any partially constructed string */
         if(lval.string) {
           free(lval.string);
           lval.string = NULL;
         }
         if(is_end) {
-          /* EOF - push EOF token to parser */
-          (void)test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
+          status = test_parser_push_parse(pstate, 0, NULL, &lloc, ctx, scanner);
+          parse_status = status == 0 ? 0 : 1;
           goto done;
         }
-        /* Need more data */
         break;
       }
 
       test_lexer_fsp_commit(scanner);
 
       if(token == ERROR) {
-        /* Free any allocated string from lval before exiting */
         if(lval.string)
           free(lval.string);
+        (void)test_parser_push_parse(pstate, 0, NULL, &lloc, ctx, scanner);
+        parse_status = 1;
         goto done;
       }
 
       /* Push token to parser */
-      status = test_parser_push_parse(pstate, token, &lval, ctx, scanner);
+      status = test_parser_push_parse(pstate, token, &lval, &lloc,
+                                      ctx, scanner);
 
       if(status != YYPUSH_MORE) {
-        /* Parser failed or completed. If it failed, it may not have consumed
-         * the token, so we need to free any string in lval. Bison push parser
-         * returns YYABORT (1) or YYACCEPT (0) but not YYPUSH_MORE (4) on error. */
         if(status != 0 && lval.string) {
-          /* Parse error - free the unconsumed token */
           free(lval.string);
         }
+        parse_status = status == 0 ? 0 : 1;
         goto done;
       }
     }
@@ -169,19 +183,45 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     remain -= chunk;
   }
 
-  /* Push final EOF */
-  (void)test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
+  status = test_parser_push_parse(pstate, 0, NULL, &eof_loc, ctx, scanner);
+  parse_status = status == 0 ? 0 : 1;
 
 done:
-  /* Clean up parser state. The %destructor should handle cleanup of any
-   * semantic values still on the stack, but this doesn't always work
-   * correctly with Bison push parsers during error recovery.
-   * See: https://www.gnu.org/software/bison/manual/html_node/Destructor-Decl.html */
+  snapshot->valid = 1;
+  snapshot->accepted = parse_status == 0;
+  snapshot->final_line = test_lexer_get_lineno(scanner);
+  snapshot->ast_hash = hash_ast();
   test_parser_pstate_delete(pstate);
   test_lexer_lex_destroy(scanner);
   fsp_destroy(ctx);
   test_parser_free_statements();
-
   return 0;
 }
 
+int
+LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
+{
+  fuzz_snapshot whole;
+  fuzz_snapshot chunked;
+  size_t chunk_base;
+  size_t input_size;
+  const uint8_t *input;
+
+  if(!data || size == 0)
+    return 0;
+
+  chunk_base = ((size_t)data[0] % 64) + 1;
+  input = size > 1 ? data + 1 : data;
+  input_size = size > 1 ? size - 1 : 0;
+
+  if(run_parse_case(input, input_size, chunk_base, 1, &whole) < 0 ||
+     run_parse_case(input, input_size, chunk_base, 0, &chunked) < 0)
+    return 0;
+
+  if(whole.valid != chunked.valid || whole.accepted != chunked.accepted ||
+     whole.ast_hash != chunked.ast_hash ||
+     whole.final_line != chunked.final_line)
+    __builtin_trap();
+
+  return 0;
+}

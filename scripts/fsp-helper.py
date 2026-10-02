@@ -274,6 +274,9 @@ def generate_streaming_parser(
 
 /* The lexer header needs the parser's semantic value type */
 #define YYSTYPE {parser_upper}_STYPE
+#ifdef {parser_upper}_LTYPE_IS_DECLARED
+#define YYLTYPE {parser_upper}_LTYPE
+#endif
 #include "{lexer_prefix}.h"
 
 int {function_name}(fsp_context *ctx, const char *input, size_t chunk_size, void *user_data);
@@ -314,6 +317,9 @@ int
   size_t pos = 0;
   size_t input_len;
   int result = 0;
+#ifdef {parser_upper}_LTYPE_IS_DECLARED
+  {parser_upper}_LTYPE eof_loc;
+#endif
 
   if(!ctx || !input || !chunk_size)
     return -1;
@@ -341,6 +347,9 @@ int
 
   /* Enable rewind support before the first token */
   {lexer_prefix}_fsp_commit(scanner);
+#ifdef {parser_upper}_LTYPE_IS_DECLARED
+  memset(&eof_loc, 0, sizeof(eof_loc));
+#endif
 
   while(1) {{
     size_t chunk;
@@ -361,10 +370,18 @@ int
     /* Lex and parse until the lexer needs more input or the end */
     while(1) {{
       {parser_upper}_STYPE lval;
+#ifdef {parser_upper}_LTYPE_IS_DECLARED
+      {parser_upper}_LTYPE lloc;
+#endif
       int token;
 
       memset(&lval, 0, sizeof(lval));
+#ifdef {parser_upper}_LTYPE_IS_DECLARED
+      memset(&lloc, 0, sizeof(lloc));
+      token = {lexer_prefix}_lex(&lval, &lloc, scanner);
+#else
       token = {lexer_prefix}_lex(&lval, scanner);
+#endif
 
       if(token == FSP_LEXER_NEED_MORE ||
          (!token && fsp_input_would_block(ctx))) {{
@@ -385,7 +402,12 @@ int
       {lexer_prefix}_fsp_commit(scanner);
 
       /* Push token to parser */
+#ifdef {parser_upper}_LTYPE_IS_DECLARED
+      status = {parser_prefix}_push_parse(pstate, token, &lval, &lloc,
+                                          ctx, scanner);
+#else
       status = {parser_prefix}_push_parse(pstate, token, &lval, ctx, scanner);
+#endif
 
       if(status != YYPUSH_MORE) {{
         /* Parse complete or error */
@@ -398,7 +420,11 @@ int
 
 eof:
   /* Push final EOF to parser */
+#ifdef {parser_upper}_LTYPE_IS_DECLARED
+  status = {parser_prefix}_push_parse(pstate, 0, NULL, &eof_loc, ctx, scanner);
+#else
   status = {parser_prefix}_push_parse(pstate, 0, NULL, ctx, scanner);
+#endif
   if(status != 0)
     result = -1;
 

@@ -57,6 +57,7 @@
 
 /* Makes yyget_lval() yyset_lval() and yylval appear */
 %option bison-bridge
+%option bison-locations
 
 /* Track line numbers, to test that rewind restores them */
 %option yylineno
@@ -80,6 +81,7 @@ char *strdup(const char *s);
 #include "test_parser.h"
 
 #define YYSTYPE TEST_PARSER_STYPE
+#define YYLTYPE TEST_PARSER_LTYPE
 
 /* Prototypes */
 static char *test_copy_string(const char *text, size_t len);
@@ -102,7 +104,23 @@ static void test_lexer_cleanup(yyscan_t yyscanner);
 
 /* Return FSP_LEXER_NEED_MORE instead of a token cut short by the end of
  * the available input, and count matched bytes for rewind support */
-#define YY_USER_ACTION FSP_LEXER_USER_ACTION(yyextra)
+#define YY_USER_ACTION do { \
+  size_t fsp_location_i; \
+  size_t fsp_location_start; \
+  FSP_LEXER_USER_ACTION(yyextra) \
+  yylloc->first_line = yylineno; \
+  yylloc->last_line = yylineno; \
+  yylloc->first_column = yycolumn; \
+  yylloc->last_column = yycolumn + (int)yyleng; \
+  fsp_location_start = (size_t)YY_MORE_ADJ; \
+  for(fsp_location_i = fsp_location_start; \
+      fsp_location_i < (size_t)yyleng; fsp_location_i++) { \
+    if(yytext[fsp_location_i] == '\n') \
+      yycolumn = 0; \
+    else \
+      yycolumn++; \
+  } \
+} while(0);
 
 /* Do not need input() */
 #define YY_NO_INPUT 1
@@ -133,7 +151,13 @@ WS       [ \t\r\n]+
 "let"    { return LET; }
   /* Give back the whitespace with yyless(), to test that rewind does not
    * count it as consumed */
-"let"{WS} { yyless(3); return LET; }
+"let"{WS} {
+    int matched_len = (int)yyleng;
+    yyless(3);
+    yycolumn -= matched_len - 3;
+    yylloc->last_column = yylloc->first_column + (int)yyleng;
+    return LET;
+}
 "="      { return EQUALS; }
 ";"      { return SEMICOLON; }
 
@@ -160,6 +184,12 @@ WS       [ \t\r\n]+
     return STRING;
 }
 
+<LONG_STRING><<EOF>> {
+    if(fsp_input_would_block(yyextra))
+      return FSP_LEXER_NEED_MORE;
+    return ERROR;
+}
+
 <LONG_STRING>[^\"]+|\" {
     /* Accumulate text in long string.  With rewind support the whole
      * string is matched within one lexer call, so yylval->string is
@@ -179,6 +209,13 @@ WS       [ \t\r\n]+
 }
 
   /* Identifiers */
+"join" { yymore(); }
+"ed"  {
+    yylval->string = test_copy_string(yytext, (size_t)yyleng);
+    if(!yylval->string)
+      return ERROR;
+    return IDENTIFIER;
+}
 {IDENT}  {
     yylval->string = test_copy_string(yytext, yyleng);
     if(!yylval->string)
@@ -254,4 +291,3 @@ test_lexer_wrap(yyscan_t yyscanner)
   (void)yyscanner;
   return 1; /* Always return 1 to indicate EOF */
 }
-

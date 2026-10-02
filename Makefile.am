@@ -13,6 +13,7 @@ ANALYZE_COMMAND = $(ANALYZE) \
 
 noinst_LTLIBRARIES = libfsp.la
 AM_CPPFLAGS = -DHAVE_FSP_CONFIG_H -I$(top_srcdir)/src -I$(builddir)
+AM_CFLAGS = $(WARN_CFLAGS)
 
 noinst_HEADERS = fsp_internal.h
 
@@ -21,9 +22,12 @@ fsp.c \
 fsp.h
 
 EXTRA_DIST = \
+GNUMakefile \
+fsp_config_standalone.h \
 fsp_test.c \
 test_lexer.l \
 test_parser.y \
+scripts/fsp-helper.py \
 scripts/postprocess-flex.py \
 scripts/postprocess-bison.py \
 scripts/README.md \
@@ -44,6 +48,12 @@ tests/comments.expected \
 tests/missing_semicolon.txt \
 tests/unterminated_string.txt \
 tests/error_at_eof.txt \
+tests/test_generated_streaming_parser.c \
+tests/test_scripts.py \
+tests/fsp_alloc_test.c \
+tests/fsp_test_alloc.c \
+tests/fsp_test_alloc.h \
+tests/cxx_smoke.cpp \
 fuzz_fsp_parse.c \
 dicts/fsp.dict \
 corpus/parse/1_basic.txt \
@@ -56,19 +66,37 @@ FUZZING.md
 if MAINTAINER_MODE
 
 # Generated source files for test parser/lexer and config
-BUILT_SOURCES = fsp_config.h test_lexer.c test_lexer.h test_parser.c test_parser.h
+BUILT_SOURCES = fsp_config.h test_lexer.c test_lexer.h test_parser.c test_parser.h \
+tests/test_generated_streaming_parser.inc
 
 MAINTAINERCLEANFILES = test_lexer.c test_lexer.h \
 test_parser.c test_parser.h test_parser.output
 
-TESTS=fsp_test$(EXEEXT)
+TESTS=fsp_test$(EXEEXT) fsp_alloc_test$(EXEEXT) cxx_smoke$(EXEEXT)
 
-check_PROGRAMS=fsp_test$(EXEEXT)
+check_PROGRAMS=fsp_test$(EXEEXT) fsp_alloc_test$(EXEEXT) cxx_smoke$(EXEEXT)
 
-CLEANFILES=*.plist test_lexer.c.t test_lexer.h.t fsp_config.h
+CLEANFILES=*.plist test_lexer.c.t test_lexer.h.t fsp_config.h \
+tests/test_generated_streaming_parser.inc
 
-fsp_test_SOURCES = fsp_test.c test_lexer.c test_parser.c
+fsp_test_SOURCES = fsp_test.c test_lexer.c test_lexer.h test_parser.c test_parser.h \
+tests/test_generated_streaming_parser.c
 fsp_test_LDADD = $(builddir)/libfsp.la
+
+fsp_alloc_test_SOURCES = fsp.c tests/fsp_alloc_test.c tests/fsp_test_alloc.c
+fsp_alloc_test_CPPFLAGS = $(AM_CPPFLAGS) -DFSP_TESTING
+
+cxx_smoke_SOURCES = tests/cxx_smoke.cpp
+cxx_smoke_CXXFLAGS = -Wall -Wextra -Wpedantic -Werror
+
+check-local:
+	$(PYTHON3) $(srcdir)/tests/test_scripts.py
+
+tests/test_generated_streaming_parser.inc: $(srcdir)/scripts/fsp-helper.py \
+$(srcdir)/test_parser.y
+	$(AM_V_GEN)$(PYTHON3) $(srcdir)/scripts/fsp-helper.py generate \
+	  --lexer-prefix test_lexer --parser-prefix test_parser \
+	  --function-name test_generated_parse -o $@
 
 # Test lexer generation with postprocess-flex.py
 # Note: postprocess-flex.py outputs to stdout, so we redirect to .t and move

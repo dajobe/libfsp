@@ -41,6 +41,12 @@ typedef struct statement_node_s {
   statement_type type;
   char *identifier;     /* For LET statements */
   char *value;          /* Expression value */
+  int line;
+  int column;             /* Zero-based source column */
+  int identifier_line;
+  int identifier_column;  /* Zero-based source column */
+  int value_line;
+  int value_column;        /* Zero-based source column */
   struct statement_node_s *next;
 } statement_node;
 
@@ -67,16 +73,21 @@ char *strdup(const char *s);
 
 #define YY_NO_UNISTD_H 1
 #undef yylex
+#define YYLTYPE TEST_PARSER_LTYPE
 #include <test_lexer.h>
 
 /* Add a statement to the parse tree */
-static void add_statement(statement_type type, const char *identifier, const char *value);
+static void add_statement(statement_type type, const char *identifier,
+                          const char *value, int line, int column,
+                          int identifier_line, int identifier_column,
+                          int value_line, int value_column);
 
 /* Prototypes */
 static void test_parser_internal_error(const char *msg);
 
 /* Prototype for yyerror (will be #defined to test_parser_error) */
-void yyerror(fsp_context* fsp_ctx, void *scanner, const char *msg);
+void yyerror(TEST_PARSER_LTYPE *location, fsp_context* fsp_ctx,
+             void *scanner, const char *msg);
 
 /* Global list of parsed statements for validation */
 static statement_node *parsed_statements = NULL;
@@ -95,7 +106,9 @@ test_parser_internal_error(const char *msg)
 
 /* Add a statement to the parse tree */
 static void
-add_statement(statement_type type, const char *identifier, const char *value)
+add_statement(statement_type type, const char *identifier, const char *value,
+              int line, int column, int identifier_line,
+              int identifier_column, int value_line, int value_column)
 {
   statement_node *node;
   
@@ -106,6 +119,12 @@ add_statement(statement_type type, const char *identifier, const char *value)
   node->type = type;
   node->identifier = identifier ? strdup(identifier) : NULL;
   node->value = value ? strdup(value) : NULL;
+  node->line = line;
+  node->column = column;
+  node->identifier_line = identifier_line;
+  node->identifier_column = identifier_column;
+  node->value_line = value_line;
+  node->value_column = value_column;
   node->next = NULL;
   
   if(!parsed_statements) {
@@ -187,6 +206,9 @@ test_parser_set_quiet(int quiet)
 /* CRITICAL: Use PUSH parser (not pull) for streaming */
 %define api.push-pull push
 
+/* Track source positions for every streamed token. */
+%locations
+
 /* Pure parser arguments */
 %lex-param { yyscan_t yyscanner }
 %parse-param { fsp_context* fsp_ctx } { void* yyscanner }
@@ -220,11 +242,14 @@ program:
 
 statement:
     PRINT expr SEMICOLON {
-      add_statement(STMT_PRINT, NULL, $2);
+      add_statement(STMT_PRINT, NULL, $2, @1.first_line, @1.first_column,
+                    0, 0, @2.first_line, @2.first_column);
       free($2);
     }
   | LET IDENTIFIER EQUALS expr SEMICOLON {
-      add_statement(STMT_LET, $2, $4);
+      add_statement(STMT_LET, $2, $4, @1.first_line, @1.first_column,
+                    @2.first_line, @2.first_column,
+                    @4.first_line, @4.first_column);
       free($2);
       free($4);
     }
@@ -252,10 +277,11 @@ expr:
 
 /* Error function required by Bison */
 void
-yyerror(fsp_context* fsp_ctx, void *scanner, const char *msg)
+yyerror(TEST_PARSER_LTYPE *location, fsp_context* fsp_ctx,
+        void *scanner, const char *msg)
 {
+  (void)location;
   (void)fsp_ctx;
   (void)scanner;
   test_parser_internal_error(msg);
 }
-

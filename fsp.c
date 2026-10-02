@@ -45,14 +45,14 @@ fsp_create(void)
 {
   fsp_context *ctx;
 
-  ctx = (fsp_context*)calloc(1, sizeof(fsp_context));
+  ctx = FSP_CALLOC(fsp_context*, 1, sizeof(fsp_context));
   if(!ctx)
     return NULL;
 
   ctx->buffer_capacity = FSP_DEFAULT_BUFFER_SIZE;
-  ctx->stream_buffer = (char*)malloc(ctx->buffer_capacity);
+  ctx->stream_buffer = FSP_MALLOC(char*, ctx->buffer_capacity);
   if(!ctx->stream_buffer) {
-    free(ctx);
+    FSP_FREE(fsp_context*, ctx);
     return NULL;
   }
 
@@ -77,11 +77,11 @@ fsp_destroy(fsp_context *ctx)
     return;
 
   if(ctx->stream_buffer) {
-    free(ctx->stream_buffer);
+    FSP_FREE(char*, ctx->stream_buffer);
     ctx->stream_buffer = NULL;
   }
 
-  free(ctx);
+  FSP_FREE(fsp_context*, ctx);
 }
 
 
@@ -161,7 +161,7 @@ fsp_buffer_append(fsp_context *ctx, const char *data, size_t length)
         new_capacity *= 2;
       }
 
-      new_buffer = (char*)realloc(ctx->stream_buffer, new_capacity);
+      new_buffer = FSP_REALLOC(char*, ctx->stream_buffer, new_capacity);
       if(!new_buffer)
         return -1; /* Out of memory */
 
@@ -386,4 +386,3 @@ fsp_parse_chunk(fsp_context *ctx, const char *chunk, size_t length, int is_end)
   else
     return FSP_STATUS_OK;
 }
-

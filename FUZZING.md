@@ -2,8 +2,8 @@
 
 ## Requirements
 
-Fuzzing requires **LLVM Clang** with libFuzzer support (not available
-in Apple Clang on macOS).
+Fuzzing requires **LLVM Clang** with libFuzzer support (not available in Apple
+Clang on macOS).
 
 ### Linux
 
@@ -17,9 +17,9 @@ sudo apt-get install clang g++
 sudo dnf install clang gcc-c++
 ```
 
-**Note:** The sanitizers require C++ standard library support (libstdc++),
-even though libfsp is written in C. On ARM64 systems, if you encounter
-`cannot find -lstdc++` errors, verify the library symlink exists:
+**Note:** The sanitizers require C++ standard library support (libstdc++), even
+though libfsp is written in C. On ARM64 systems, if you encounter `cannot find
+-lstdc++` errors, verify the library symlink exists:
 
 ```bash
 # Check and create symlink if needed
@@ -29,8 +29,8 @@ ls -la libstdc++.so || sudo ln -s libstdc++.so.6 libstdc++.so
 
 ### macOS (via Homebrew)
 
-**IMPORTANT:** Apple Clang (macOS default) does **not** include
-libFuzzer support.
+**IMPORTANT:** Apple Clang (macOS default) does **not** include libFuzzer
+support.
 
 You must install and use LLVM Clang from Homebrew:
 
@@ -48,8 +48,8 @@ clang --version
 # Should show: clang version X.X.X (not "Apple clang")
 ```
 
-If you see "Apple clang", the system clang is still being used. Make
-sure LLVM's bin directory is first in your PATH.
+If you see "Apple clang", the system clang is still being used. Make sure LLVM's
+bin directory is first in your PATH.
 
 ## Building the Fuzzer
 
@@ -104,20 +104,16 @@ Common libFuzzer options:
 
 ### Leak Detection
 
-By default, the fuzzer runs with `-detect_leaks=0` to disable LeakSanitizer.
-This is because **Bison's push parser** doesn't always properly invoke `%destructor`
-for semantic values on the stack during error recovery.
+The `fuzz-parse-run` target enables LeakSanitizer by default. The harness
+compares whole-input and chunked parsing for acceptance, semantic output, source
+locations, and final line numbers while ASan, UBSan, and LeakSanitizer check
+memory behavior.
 
-This is a **known limitation of Bison**, not a bug in libfsp. The small leaks only
-occur in the test parser/lexer (used for validating libfsp), not in libfsp's core
-streaming buffer management.
+To disable leak detection for a focused run:
 
-To enable leak detection anyway:
 ```bash
-./fuzz_fsp_parse -detect_leaks=1 -timeout=10 -max_total_time=60 corpus/parse
+./fuzz_fsp_parse -detect_leaks=0 -timeout=10 -max_total_time=60 corpus/parse
 ```
-
-Expect small leaks (a few bytes) from parse errors - these can be safely ignored.
 
 ## Corpus
 
@@ -168,14 +164,13 @@ Crashing inputs are saved to `artifacts/` for debugging.
 
 ### Common Issues
 
-**Timeout:**
-Input caused hang or infinite loop. Saved to `artifacts/timeout-*`.
+**Timeout:** Input caused hang or infinite loop. Saved to `artifacts/timeout-*`.
 
-**Out of Memory:**
-Input caused excessive memory allocation. Saved to `artifacts/oom-*`.
+**Out of Memory:** Input caused excessive memory allocation. Saved to
+`artifacts/oom-*`.
 
-**Sanitizer Error:**
-Memory safety violation or undefined behavior. Saved to `artifacts/crash-*`.
+**Sanitizer Error:** Memory safety violation or undefined behavior. Saved to
+`artifacts/crash-*`.
 
 ## Reproducing Crashes
 

@@ -17,21 +17,24 @@ FSPLIBHDRS=fsp.h fsp_internal.h
 
 LIBS=$(FSPLIB)
 
-TESTSRCS=fsp_test.c test_lexer.c test_parser.c
-TESTS=fsp_test
+TESTSRCS=fsp_test.c test_lexer.c test_parser.c tests/test_generated_streaming_parser.c
+TESTS=fsp_test fsp_alloc_test cxx_smoke tests/test_scripts.py
+ALLOCTESTOBJS=tests/fsp_alloc_test.o tests/fsp_test_alloc.o fsp_test_alloc_core.o
 
 # Generated files from flex/bison
 GENERATED=test_lexer.c test_lexer.h test_parser.c test_parser.h test_parser.output
 
-CLEANFILES=$(TESTS) $(LIBS) \
+CLEANFILES=fsp_test fsp_alloc_test cxx_smoke $(LIBS) \
 stamp-h1 \
 test_lexer.t \
+tests/test_generated_streaming_parser.inc \
 $(GENERATED)
 
 FILES=README.md \
 GNUMakefile \
 AUTHORS ChangeLog COPYING COPYING.LIB LICENSE.txt LICENSE-2.0.txt \
 NOTICE NEWS configure.ac Makefile.am \
+fsp_config_standalone.h \
 test_lexer.l test_parser.y \
 $(FSPLIBSRCS) $(FSPLIBHDRS) fsp_test.c \
 tests/simple.txt tests/simple.expected \
@@ -97,6 +100,25 @@ test_parser.c: test_parser.y scripts/postprocess-bison.py
 test_parser.h: test_parser.c
 	@true
 
+tests/test_generated_streaming_parser.inc: scripts/fsp-helper.py test_parser.y
+	$(PYTHON3) scripts/fsp-helper.py generate \
+	  --lexer-prefix test_lexer --parser-prefix test_parser \
+	  --function-name test_generated_parse -o $@
+
+tests/test_generated_streaming_parser.o: tests/test_generated_streaming_parser.inc \
+test_parser.h test_lexer.h fsp.h
+
+fsp_test_alloc_core.o: fsp.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DFSP_TESTING -c -o $@ $<
+
+fsp_alloc_test: $(ALLOCTESTOBJS)
+	$(CC) $(LDFLAGS) -o $@ $(ALLOCTESTOBJS)
+
+cxx_smoke: tests/cxx_smoke.cpp fsp.c fsp.h fsp_internal.h
+	$(CXX) -std=c++11 -Wall -Wextra -Wpedantic -Werror \
+	  -DHAVE_FSP_CONFIG_H -DHAVE_STDLIB_H -DHAVE_STRING_H -I. \
+	  -o $@ tests/cxx_smoke.cpp
+
 test_lexer.h: test_lexer.c
 	@true
 
@@ -118,6 +140,7 @@ dist: $(FILES)
 	cp $(FILES) $(PV) && \
 	cp tests/*.txt $(PV)/tests/ 2>/dev/null || true && \
 	cp tests/*.expected $(PV)/tests/ 2>/dev/null || true && \
+	cp tests/*.c tests/*.cpp tests/*.h tests/*.py $(PV)/tests/ && \
 	cp scripts/*.py scripts/README.md $(PV)/scripts/ && \
 	cp corpus/parse/* $(PV)/corpus/parse/ && \
 	cp dicts/* $(PV)/dicts/ && \
@@ -131,7 +154,10 @@ check: $(TESTS)
 	@rc=0; \
 	for t in $(TESTS); do \
 	  echo "Running test $$t"; \
-	  ./$$t; \
+	  case $$t in \
+	    *.py) $(PYTHON3) $$t ;; \
+	    *) ./$$t ;; \
+	  esac; \
 	  status=$$?; \
 	  if test $$status != 0; then \
 	    rc=1; \
@@ -151,8 +177,7 @@ FUZZ_LDFLAGS = -fsanitize=fuzzer,address,undefined -L/usr/lib/aarch64-linux-gnu 
 .PHONY: fuzz-lib fuzz fuzz-clean
 
 # Rebuild the library with clang and sanitizers suitable for fuzzing
-# Use .NOTPARALLEL to ensure sequential execution and avoid race conditions
-.NOTPARALLEL: fuzz-lib
+# Recursive builds keep generation and compilation after cleanup, even with -j.
 fuzz-lib:
 	@# Clean all object files and generated sources
 	rm -f fsp.o libfsp.a test_lexer.o test_lexer.c test_lexer.h test_parser.o test_parser.c test_parser.h
@@ -164,7 +189,8 @@ fuzz-lib:
 fuzz_fsp_parse.o: fuzz_fsp_parse.c fsp.h test_parser.h test_lexer.h
 	$(CLANG) $(FUZZ_CFLAGS) -I. -DHAVE_FSP_CONFIG_H -DHAVE_STDLIB_H -DHAVE_STRING_H -c -o $@ $<
 
-fuzz_fsp_parse: fuzz-lib fuzz_fsp_parse.o $(FSPLIB) test_lexer.o test_parser.o
+fuzz_fsp_parse: fuzz-lib
+	+$(MAKE) -f GNUMakefile fuzz_fsp_parse.o
 	$(CLANG) $(FUZZ_CFLAGS) -o $@ fuzz_fsp_parse.o test_lexer.o test_parser.o $(FSPLIB) $(FUZZ_LDFLAGS)
 
 fuzz: fuzz_fsp_parse
@@ -184,4 +210,4 @@ artifacts:
 	mkdir -p artifacts
 
 fuzz-parse-run: fuzz_fsp_parse artifacts
-	./fuzz_fsp_parse -detect_leaks=0 -timeout=$(FUZZ_TIMEOUT) -max_total_time=$(FUZZ_TIME) -artifact_prefix=artifacts/ -dict=$(FUZZ_DICT) $(PARSE_CORPUS)
+	./fuzz_fsp_parse -detect_leaks=1 -timeout=$(FUZZ_TIMEOUT) -max_total_time=$(FUZZ_TIME) -artifact_prefix=artifacts/ -dict=$(FUZZ_DICT) $(PARSE_CORPUS)
