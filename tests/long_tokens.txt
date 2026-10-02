@@ -1,0 +1,4 @@
+let abcdefghijklmnopqrstuvwxyz_0123456789 = 1234567890;
+print """first line
+second line with "quotes" and ""two"" quotes""";
+print abcdefghijklmnopqrstuvwxyz_0123456789;

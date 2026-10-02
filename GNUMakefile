@@ -39,6 +39,8 @@ tests/triple-quoted.txt tests/triple-quoted.expected \
 tests/mixed.txt tests/mixed.expected \
 tests/empty.txt tests/empty.expected \
 tests/long_string.txt tests/long_string.expected \
+tests/long_tokens.txt tests/long_tokens.expected \
+tests/comments.txt tests/comments.expected \
 tests/missing_semicolon.txt tests/unterminated_string.txt \
 tests/error_at_eof.txt \
 fuzz_fsp_parse.c dicts/fsp.dict FUZZING.md
@@ -83,7 +85,7 @@ test_lexer.c: test_lexer.l test_parser.c scripts/postprocess-flex.py
 	$(LEX) -o$@ $<
 	for file in test_lexer.c test_lexer.h; do \
 	  if [ -f $$file ]; then \
-	    $(PYTHON3) scripts/postprocess-flex.py $$file > $$file.tmp || exit 1; \
+	    $(PYTHON3) scripts/postprocess-flex.py --fsp-rewind $$file > $$file.tmp || exit 1; \
 	    mv -f $$file.tmp $$file; \
 	  fi; \
 	done

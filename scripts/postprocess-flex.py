@@ -35,21 +35,115 @@ Options:
   -g, --guard-macro NAME      Guard macro name (default: HAVE_CONFIG_H)
                               Use your project's guard (e.g., HAVE_RAPTOR_CONFIG_H)
   -o, --output PATH           Write output to file instead of stdout
+  --fsp-rewind                Add libfsp rewind support functions
+                              PREFIXfsp_commit() and PREFIXfsp_rewind()
+                              for rescanning tokens split across chunks
+                              (see "Rewind support" in scripts/README.md)
 
 (C) Copyright 2024-2025 Dave Beckett https://www.dajobe.org/
 """
 
 import argparse
 import logging
+import os
 import re
 import sys
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
+def fsp_rewind_header_code(public_prefix: str) -> str:
+    """
+    Return prototypes for the libfsp rewind support functions.
+
+    Args:
+        public_prefix: Lexer symbol prefix such as 'turtle_lexer_'
+    """
+    return f"""\
+/* libfsp rewind support added by postprocess-flex.py --fsp-rewind */
+void {public_prefix}fsp_commit(yyscan_t yyscanner);
+void {public_prefix}fsp_rewind(yyscan_t yyscanner);
+"""
+
+
+def fsp_rewind_source_code(public_prefix: str) -> str:
+    """
+    Return definitions of the libfsp rewind support functions.
+
+    They use Flex internals so they must be in the generated lexer
+    source.  The lexer extra data (yyextra) must be the fsp_context.
+
+    Args:
+        public_prefix: Lexer symbol prefix such as 'turtle_lexer_'
+    """
+    return f"""
+/* libfsp rewind support added by postprocess-flex.py --fsp-rewind
+ *
+ * Call {public_prefix}fsp_commit() once before lexing starts and after
+ * every complete token.  It records how much input the lexer consumed
+ * and saves the start condition, beginning of line flag and location.  When the lexer returns FSP_LEXER_NEED_MORE, or
+ * returns 0 while fsp_input_would_block() is true, call
+ * {public_prefix}fsp_rewind() and call the lexer again after more input
+ * has been appended.
+ */
+void {public_prefix}fsp_commit(yyscan_t yyscanner);
+void {public_prefix}fsp_rewind(yyscan_t yyscanner);
+
+/* Mark the input so far as complete tokens and save the lexer state */
+void
+{public_prefix}fsp_commit(yyscan_t yyscanner)
+{{
+  struct yyguts_t *yyg = (struct yyguts_t *)yyscanner;
+  fsp_lexer_state state;
+  size_t unread = 0;
+
+  state.start_condition = YY_START;
+  state.at_bol = 1;
+  state.lineno = 1;
+  state.column = 0;
+
+  if(YY_CURRENT_BUFFER) {{
+    /* Input after the last token that is still in the Flex buffer */
+    unread = (size_t)yyg->yy_n_chars -
+             (size_t)(yyg->yy_c_buf_p - YY_CURRENT_BUFFER_LVALUE->yy_ch_buf);
+    state.at_bol = YY_CURRENT_BUFFER_LVALUE->yy_at_bol;
+    state.lineno = YY_CURRENT_BUFFER_LVALUE->yy_bs_lineno;
+    state.column = YY_CURRENT_BUFFER_LVALUE->yy_bs_column;
+  }}
+
+  fsp_buffer_commit(yyextra, unread, &state);
+}}
+
+/* Discard input read since the last commit, including the lexer's
+ * buffer, and restore the lexer state saved by the commit */
+void
+{public_prefix}fsp_rewind(yyscan_t yyscanner)
+{{
+  struct yyguts_t *yyg = (struct yyguts_t *)yyscanner;
+  fsp_lexer_state state;
+
+  fsp_buffer_rewind(yyextra, &state);
+  BEGIN(state.start_condition);
+
+  if(YY_CURRENT_BUFFER) {{
+    yy_flush_buffer(YY_CURRENT_BUFFER, yyscanner);
+    /* flushing sets beginning of line; restore it and the location */
+    YY_CURRENT_BUFFER_LVALUE->yy_at_bol = state.at_bol;
+    YY_CURRENT_BUFFER_LVALUE->yy_bs_lineno = state.lineno;
+    YY_CURRENT_BUFFER_LVALUE->yy_bs_column = state.column;
+  }}
+}}
+"""
+
+
 def fix(
-    flex_input_file, config_header="fsp_config.h", guard_macro=None, output_path=None
-):
+    flex_input_file: str,
+    config_header: str = "fsp_config.h",
+    guard_macro: Optional[str] = None,
+    output_path: Optional[str] = None,
+    fsp_rewind: bool = False,
+) -> None:
     """
     Formats flex output according to specified rules.
 
@@ -58,6 +152,7 @@ def fix(
         config_header: Name of the config header to include (default: fsp_config.h)
         guard_macro: Guard macro name (default: HAVE_CONFIG_H)
         output_path: Optional output file path (default: stdout)
+        fsp_rewind: Add libfsp rewind support functions
     """
     f_out = sys.stdout
     if output_path:
@@ -65,12 +160,20 @@ def fix(
 
     try:
         with open(flex_input_file, "r") as infile:
-            # Lexer symbol prefix such as 'turtle_lexer_'
+            # Lexer symbol prefix used in generated names, usually 'yy'
             prefix = ""
+            # Lexer symbol prefix from %option prefix such as 'turtle_lexer_'
+            public_prefix = ""
+            # Lines written so far, for #line directives in added code
+            out_lines = 0
+            # Non-0 if this is the generated header file
+            is_header = False
+            # Generated file name from #line directives
+            generated_name = os.path.basename(flex_input_file)
             # Current function or None if out of function
             cur_function = None
             # State for current function for rules to use.
-            fn_state = set()
+            fn_state: set[str] = set()
 
             line_offset = 1
 
@@ -88,6 +191,7 @@ def fix(
 """
             )
             line_offset += 4
+            out_lines += 4
 
             # Read entire source lines
             s = list(enumerate(infile, start=1))
@@ -99,6 +203,29 @@ def fix(
                 if not prefix and m:
                     prefix = m.group(1)
                     logger.debug(f"Line {line_number}: Lexer prefix: {prefix}")
+
+                # Find public lexer prefix from the yyrestart renaming
+                m = re.match(r"^#define\s+yyrestart\s+(\w*)restart\s*$", line)
+                if not public_prefix and m:
+                    public_prefix = m.group(1)
+                    logger.debug(
+                        f"Line {line_number}: Public lexer prefix: {public_prefix}"
+                    )
+
+                # Generated header defines PREFIXIN_HEADER
+                if re.match(r"^#define\s+\w*IN_HEADER\s+1\s*$", line):
+                    is_header = True
+
+                # Add rewind support prototypes at the end of the header
+                if (
+                    fsp_rewind
+                    and is_header
+                    and re.match(r"^#undef\s+\w*IN_HEADER\s*$", line)
+                ):
+                    code = fsp_rewind_header_code(public_prefix or prefix)
+                    f_out.write(code)
+                    out_lines += code.count("\n")
+                    line_offset += code.count("\n")
 
                 # Remove generated yy_fatal_error declaration and
                 # definition to avoid warnings about unused/non-defined
@@ -249,6 +376,11 @@ def fix(
                 # Make buffer size and number of characters unsigned
                 line = re.sub(r"int (yy_buf_size|yy_n_chars)", r"yy_size_t \1", line)
 
+                # Remember the generated file name used in #line directives
+                m = re.match(r'^\#line \d+ "(.*\.[ch])"', line)
+                if m:
+                    generated_name = m.group(1)
+
                 # Fixup pending filename renaming, see above.
                 # Fix line numbers.
                 line = re.sub(
@@ -258,12 +390,19 @@ def fix(
                 )
 
                 f_out.write(line)
+                out_lines += line.count("\n")
+
+            # Add rewind support functions at the end of the source
+            if fsp_rewind and not is_header:
+                f_out.write(f'#line {out_lines + 2} "{generated_name}"\n')
+                out_lines += 1
+                f_out.write(fsp_rewind_source_code(public_prefix or prefix))
     finally:
         if output_path:
             f_out.close()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Format flex output")
     parser.add_argument("INPUT", help="Input flex file")
     parser.add_argument(
@@ -281,6 +420,12 @@ def main():
     parser.add_argument(
         "-o", "--output", default=None, help="Write output to file instead of stdout"
     )
+    parser.add_argument(
+        "--fsp-rewind",
+        action="store_true",
+        help="Add libfsp rewind support functions PREFIXfsp_commit() and"
+        " PREFIXfsp_rewind()",
+    )
     parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode")
     args = parser.parse_args()
 
@@ -289,7 +434,7 @@ def main():
     else:
         logging.basicConfig(level=logging.INFO)
 
-    fix(args.INPUT, args.config_header, args.guard_macro, args.output)
+    fix(args.INPUT, args.config_header, args.guard_macro, args.output, args.fsp_rewind)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+LET: abcdefghijklmnopqrstuvwxyz_0123456789 = 1234567890
+PRINT: first line
+second line with "quotes" and ""two"" quotes
+PRINT: abcdefghijklmnopqrstuvwxyz_0123456789

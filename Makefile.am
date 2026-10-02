@@ -37,6 +37,10 @@ tests/empty.txt \
 tests/empty.expected \
 tests/long_string.txt \
 tests/long_string.expected \
+tests/long_tokens.txt \
+tests/long_tokens.expected \
+tests/comments.txt \
+tests/comments.expected \
 tests/missing_semicolon.txt \
 tests/unterminated_string.txt \
 tests/error_at_eof.txt \
@@ -72,7 +76,7 @@ test_lexer.c: $(srcdir)/test_lexer.l test_parser.c $(srcdir)/scripts/postprocess
 	$(AM_V_GEN) \
 	$(LEX) -o$@ $(srcdir)/test_lexer.l; \
 	for file in test_lexer.c test_lexer.h; do \
-	  $(PYTHON3) $(srcdir)/scripts/postprocess-flex.py $$file > $$file.t || exit 1; \
+	  $(PYTHON3) $(srcdir)/scripts/postprocess-flex.py --fsp-rewind $$file > $$file.t || exit 1; \
 	  mv -f $$file.t $$file; \
 	done
 

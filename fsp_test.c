@@ -40,6 +40,9 @@
 static int test_count = 0;
 static int test_failed = 0;
 
+/* Line number reached by the lexer in the last streaming parse */
+static int last_lineno = 0;
+
 /* Helper function to read file into memory */
 static char*
 read_file(const char *filename, size_t *length)
@@ -187,25 +190,21 @@ validate_parse_result(const char *expected_file)
   test_failed++; \
 } while(0)
 
-/* Minimum buffer size before calling lexer to prevent partial token issues
- * Set to 16 bytes - sufficient for any keyword in the test grammar.
- * This enables streaming with arbitrarily small chunks (even 1 byte).
+/* Parse input with the streaming parser, appending it in chunks of
+ * chunk_size bytes.  Uses rewind support so that a token split across
+ * chunks is rescanned once the rest of it has arrived.  The parsed
+ * statements are left for the caller to inspect and free.
+ *
+ * Returns 0 on success, -1 on error
  */
-#define MIN_BUFFER_FOR_LEX 16
-
-/* Test the parser with streaming chunks using proper buffer accumulation strategy */
 static int
-test_streaming_parser(const char *input, size_t chunk_size,
-                      const char *expected_file)
+run_streaming_parser(const char *input, size_t input_len, size_t chunk_size)
 {
   fsp_context *ctx;
   yyscan_t scanner;
   test_parser_pstate *pstate;
-  int status;
+  int status = 0;
   size_t pos = 0;
-  size_t input_len = strlen(input);
-  int result;
-  int final_drain = 0;
 
   /* Reset parser state before test */
   test_parser_reset();
@@ -232,65 +231,55 @@ test_streaming_parser(const char *input, size_t chunk_size,
     return -1;
   }
 
-  /* PROPER STREAMING STRATEGY:
-   * 1. Accumulate chunks until buffer has MIN_BUFFER_FOR_LEX bytes OR EOF
-   * 2. Only then call lexer - prevents Flex from seeing partial tokens
-   * 3. This allows streaming with arbitrarily small chunks (even 1 byte)
-   * See README.md "Streaming with Small Chunks" section for details.
-   */
-  while(pos < input_len || final_drain) {
-    int is_eof;
+  /* Enable rewind support before the first token */
+  test_lexer_fsp_commit(scanner);
 
-    /* Phase 1: Accumulate chunks until buffer is sufficiently full */
-    while(pos < input_len && fsp_buffer_available(ctx) < MIN_BUFFER_FOR_LEX) {
+  while(1) {
+    /* Append the next chunk, if any */
+    if(pos < input_len) {
       size_t chunk;
 
       chunk = input_len - pos;
       if(chunk > chunk_size)
         chunk = chunk_size;
 
-      /* Append chunk to FSP buffer */
       if(fsp_buffer_append(ctx, input + pos, chunk) < 0) {
-        test_parser_pstate_delete(pstate);
-        test_lexer_lex_destroy(scanner);
-        fsp_destroy(ctx);
-        return -1;
+        status = 1;
+        goto done;
       }
 
       pos += chunk;
     }
 
-    /* Check if we've reached end of input */
-    is_eof = (pos >= input_len);
-
-    if(is_eof && !final_drain) {
-      /* Signal EOF to FSP context - no more chunks coming */
+    /* Signal EOF to FSP context after the last chunk */
+    if(pos >= input_len)
       ctx->more_chunks_expected = 0;
-      final_drain = 1;
-    }
 
-    /* Phase 2: Process tokens (only when buffer is full enough OR at EOF) */
-    while(fsp_buffer_available(ctx) > 0 || (is_eof && final_drain)) {
+    /* Lex and parse until the lexer needs more input or the end */
+    while(1) {
       TEST_PARSER_STYPE lval;
       int token;
 
-      /* Don't call lexer if buffer is low and more data is coming */
-      if(!is_eof && fsp_buffer_available(ctx) < MIN_BUFFER_FOR_LEX)
-        break;  /* Get more chunks first */
-
-      /* Get next token from lexer */
+      lval.string = NULL;
       token = test_lexer_lex(&lval, scanner);
 
-      if(token == 0) {
-        /* No more tokens available */
-        if(!is_eof) {
-          /* Lexer needs more data but we have more chunks coming */
-          break;
-        }
-        /* Real EOF - done draining */
-        final_drain = 0;
+      if(token == FSP_LEXER_NEED_MORE ||
+         (!token && fsp_input_would_block(ctx))) {
+        /* The input ran out, possibly inside a token.  Discard any
+         * partial long string and rescan from the end of the last
+         * complete token after the next chunk is appended. */
+        free(lval.string);
+        test_lexer_fsp_rewind(scanner);
         break;
       }
+
+      if(!token) {
+        /* Real EOF; free an unterminated long string */
+        free(lval.string);
+        goto eof;
+      }
+
+      test_lexer_fsp_commit(scanner);
 
       if(token == ERROR) {
         status = 1;
@@ -305,16 +294,14 @@ test_streaming_parser(const char *input, size_t chunk_size,
         goto done;
       }
     }
-
-    /* Exit loop if we're done draining at EOF */
-    if(!final_drain && is_eof)
-      break;
   }
 
+eof:
   /* Push final EOF to parser */
   status = test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
 
 done:
+  last_lineno = test_lexer_get_lineno(scanner);
   test_parser_pstate_delete(pstate);
   test_lexer_lex_destroy(scanner);
   fsp_destroy(ctx);
@@ -325,18 +312,29 @@ done:
     return -1;
   }
 
-  /* Validate result if expected file is provided */
-  if(expected_file) {
-    result = validate_parse_result(expected_file);
-    /* Free statements after validation */
-    test_parser_free_statements();
-    return result;
-  }
-
-  /* Free statements if no validation requested */
-  test_parser_free_statements();
   return 0;
 }
+
+
+/* Test the parser with streaming chunks and validate the result */
+static int
+test_streaming_parser(const char *input, size_t chunk_size,
+                      const char *expected_file)
+{
+  int result;
+
+  if(run_streaming_parser(input, strlen(input), chunk_size) < 0)
+    return -1;
+
+  /* Validate result if expected file is provided */
+  result = 0;
+  if(expected_file)
+    result = validate_parse_result(expected_file);
+
+  test_parser_free_statements();
+  return result;
+}
+
 
 /* Test parser with input from file */
 static int
@@ -563,10 +561,10 @@ int main(int argc, char **argv)
     PASS();
   }
 
-  /* Test 16: Small chunk streaming (tests buffer accumulation strategy) */
-  /* With the proper buffer accumulation strategy (see MIN_BUFFER_FOR_LEX),
-   * streaming works correctly with ANY chunk size, including 1-byte chunks.
-   * This test uses 5-byte chunks to verify streaming across token boundaries. */
+  /* Test 16: Small chunk streaming across token boundaries */
+  /* With rewind support, streaming works correctly with ANY chunk size,
+   * including 1-byte chunks.  This test uses 5-byte chunks to verify
+   * streaming across token boundaries. */
   TEST("Small chunk streaming with 5-byte chunks (tests/mixed.txt)");
   if(test_file_parser("tests/mixed.txt", "tests/mixed.expected", 5) < 0) {
     FAIL("5-byte chunk streaming with mixed.txt failed");
@@ -592,7 +590,7 @@ int main(int argc, char **argv)
     }
   }
 
-  /* Test 18: 1-byte chunks (demonstrates proper buffer accumulation works) */
+  /* Test 18: 1-byte chunks (every token is split across chunks) */
   TEST("Streaming with 1-byte chunks (tests/triple-quoted.txt)");
   if(test_file_parser("tests/triple-quoted.txt", "tests/triple-quoted.expected", 1) < 0) {
     FAIL("1-byte chunk streaming with triple-quoted.txt failed");
@@ -658,6 +656,252 @@ int main(int argc, char **argv)
       }
     } else {
       FAIL("Could not read test file");
+    }
+  }
+
+  /* Test 21: Rewind API - commit, would block and rewind */
+  TEST("fsp_buffer_commit/fsp_input_would_block/fsp_buffer_rewind");
+  {
+    int ok = 1;
+    fsp_lexer_state state;
+    fsp_lexer_state saved;
+
+    ctx = fsp_create();
+    if(!ctx) {
+      FAIL("Failed to create FSP context");
+    } else {
+      /* Enable rewind support at the start of input */
+      fsp_buffer_commit(ctx, 0, NULL);
+      fsp_buffer_append(ctx, "abcdef", 6);
+
+      /* Lexer reads everything, consumes 2 bytes as a token and still
+       * has 4 bytes in its own buffer */
+      bytes_read = fsp_read_input(ctx, buffer, sizeof(buffer));
+      if(bytes_read != 6)
+        ok = 0;
+      state.start_condition = 7;
+      state.at_bol = 0;
+      state.lineno = 3;
+      state.column = 5;
+      fsp_buffer_commit(ctx, 4, &state);
+
+      /* Input runs out with more chunks expected */
+      if(fsp_input_would_block(ctx))
+        ok = 0;
+      if(fsp_read_input(ctx, buffer, sizeof(buffer)) != 0)
+        ok = 0;
+      if(!fsp_input_would_block(ctx))
+        ok = 0;
+
+      /* Rewind returns to the end of the token and the saved state */
+      memset(&saved, 0, sizeof(saved));
+      fsp_buffer_rewind(ctx, &saved);
+      if(saved.start_condition != 7 || saved.at_bol != 0 ||
+         saved.lineno != 3 || saved.column != 5)
+        ok = 0;
+      if(fsp_input_would_block(ctx))
+        ok = 0;
+      if(fsp_buffer_available(ctx) != 4)
+        ok = 0;
+      bytes_read = fsp_read_input(ctx, buffer, sizeof(buffer));
+      if(bytes_read != 4 || memcmp(buffer, "cdef", 4) != 0)
+        ok = 0;
+
+      /* The mark never moves back before the previous commit */
+      fsp_buffer_commit(ctx, 100, NULL);
+      fsp_buffer_rewind(ctx, NULL);
+      if(fsp_buffer_available(ctx) != 4)
+        ok = 0;
+
+      /* At the real end of input, running out does not block */
+      ctx->more_chunks_expected = 0;
+      while(fsp_read_input(ctx, buffer, sizeof(buffer)) > 0)
+        ;
+      if(fsp_read_input(ctx, buffer, sizeof(buffer)) != 0 ||
+         fsp_input_would_block(ctx))
+        ok = 0;
+
+      if(ok)
+        PASS();
+      else
+        FAIL("Rewind API returned unexpected values");
+      fsp_destroy(ctx);
+    }
+  }
+
+  /* Test 22: Compaction keeps uncommitted input for rewind */
+  TEST("Buffer compaction keeps input after the commit mark");
+  {
+    size_t i;
+    int ok = 1;
+
+    ctx = fsp_create();
+    large_size = 100 * 1024; /* more than the default buffer size */
+    large_data = (char*)malloc(large_size);
+    if(!ctx || !large_data) {
+      FAIL("Failed to allocate test data");
+    } else {
+      for(i = 0; i < large_size; i++)
+        large_data[i] = (char)('a' + (i % 26));
+
+      fsp_buffer_commit(ctx, 0, NULL);
+      fsp_buffer_append(ctx, large_data, 1000);
+
+      /* Read all, commit after 10 bytes (990 unread by the lexer) then
+       * append enough to compact */
+      while(fsp_read_input(ctx, buffer, sizeof(buffer)) > 0)
+        ;
+      fsp_buffer_commit(ctx, 990, NULL);
+      fsp_buffer_append(ctx, large_data + 1000, large_size - 1000);
+
+      /* Rewind must return to byte 10, not to the compaction point */
+      fsp_buffer_rewind(ctx, NULL);
+      if(fsp_buffer_available(ctx) != large_size - 10)
+        ok = 0;
+      bytes_read = fsp_read_input(ctx, buffer, 26);
+      if(bytes_read != 26 || memcmp(buffer, large_data + 10, 26) != 0)
+        ok = 0;
+
+      if(ok)
+        PASS();
+      else
+        FAIL("Uncommitted input was lost by compaction");
+    }
+    free(large_data);
+    fsp_destroy(ctx);
+  }
+
+  /* Test 23: Every chunk size gives the same result */
+  TEST("Every chunk size from 1 byte to whole input (tests/*.txt)");
+  {
+    static const char * const files[][2] = {
+      { "tests/simple.txt", "tests/simple.expected" },
+      { "tests/triple-quoted.txt", "tests/triple-quoted.expected" },
+      { "tests/mixed.txt", "tests/mixed.expected" },
+      { "tests/empty.txt", "tests/empty.expected" },
+      { "tests/long_string.txt", "tests/long_string.expected" },
+      { "tests/long_tokens.txt", "tests/long_tokens.expected" },
+      { "tests/comments.txt", "tests/comments.expected" }
+    };
+    size_t f;
+    int failures = 0;
+
+    for(f = 0; f < sizeof(files) / sizeof(files[0]); f++) {
+      char *input;
+      size_t length;
+      size_t chunk_size;
+      int whole_lineno;
+
+      input = read_file(files[f][0], &length);
+      if(!input) {
+        fprintf(stderr, "\n  Could not read %s", files[f][0]);
+        failures++;
+        continue;
+      }
+
+      /* Line number after parsing the whole input as one chunk */
+      (void)test_streaming_parser(input, length + 1, NULL);
+      whole_lineno = last_lineno;
+
+      for(chunk_size = 1; chunk_size <= length + 1; chunk_size++) {
+        if(test_streaming_parser(input, chunk_size, files[f][1]) < 0) {
+          fprintf(stderr, "\n  %s failed with %zu-byte chunks",
+                  files[f][0], chunk_size);
+          failures++;
+        } else if(last_lineno != whole_lineno) {
+          fprintf(stderr, "\n  %s ended on line %d not %d with %zu-byte chunks",
+                  files[f][0], last_lineno, whole_lineno, chunk_size);
+          failures++;
+        }
+      }
+      free(input);
+    }
+
+    if(failures) {
+      fprintf(stderr, "\n");
+      FAIL("Chunked parse differed from expected output");
+    } else {
+      PASS();
+    }
+  }
+
+  /* Test 24: Long string bigger than the lexer's buffers */
+  TEST("Long string larger than the lexer buffer");
+  {
+    static const size_t chunk_sizes[] = { 1000, 4096, 8192, 65536 };
+    const size_t string_len = 40000;
+    const char *prefix = "print \"\"\"";
+    const char *suffix = "\"\"\";\nprint \"after\";\n";
+    char *input;
+    size_t input_len;
+    size_t c;
+    int failures = 0;
+
+    input_len = strlen(prefix) + string_len + strlen(suffix);
+    input = (char*)malloc(input_len + 1);
+    if(!input) {
+      FAIL("Failed to allocate test data");
+    } else {
+      strcpy(input, prefix);
+      memset(input + strlen(prefix), 'x', string_len);
+      strcpy(input + strlen(prefix) + string_len, suffix);
+
+      for(c = 0; c < sizeof(chunk_sizes) / sizeof(chunk_sizes[0]); c++) {
+        statement_node *stmt;
+
+        if(run_streaming_parser(input, input_len, chunk_sizes[c]) < 0) {
+          fprintf(stderr, "\n  Parse failed with %zu-byte chunks",
+                  chunk_sizes[c]);
+          failures++;
+          continue;
+        }
+
+        stmt = test_parser_get_statements();
+        if(!stmt || !stmt->value || strlen(stmt->value) != string_len ||
+           strspn(stmt->value, "x") != string_len ||
+           !stmt->next || !stmt->next->value ||
+           strcmp(stmt->next->value, "after") || stmt->next->next) {
+          fprintf(stderr, "\n  Wrong statements with %zu-byte chunks",
+                  chunk_sizes[c]);
+          failures++;
+        }
+        test_parser_free_statements();
+      }
+      free(input);
+
+      if(failures) {
+        fprintf(stderr, "\n");
+        FAIL("Long string was not parsed correctly");
+      } else {
+        PASS();
+      }
+    }
+  }
+
+  /* Test 25: Beginning of line state is restored after a rewind */
+  TEST("Mid-line # is an error at every chunk size");
+  {
+    /* The # follows a token on the same line, so it is not a comment.
+     * If a rewind to the end of "1" set beginning of line, the ^#
+     * comment rule would match and the input would wrongly parse. */
+    const char *input = "let x = 1# not a comment\n;\n";
+    size_t chunk_size;
+    int failures = 0;
+
+    test_parser_set_quiet(1);
+    for(chunk_size = 1; chunk_size <= strlen(input) + 1; chunk_size++) {
+      if(test_streaming_parser(input, chunk_size, NULL) == 0) {
+        fprintf(stderr, "\n  Parsed with %zu-byte chunks", chunk_size);
+        failures++;
+      }
+    }
+    test_parser_set_quiet(0);
+
+    if(failures) {
+      fprintf(stderr, "\n");
+      FAIL("Mid-line # was treated as a comment");
+    } else {
+      PASS();
     }
   }
 

@@ -110,7 +110,11 @@ fsp_read_input(void *user_data, char *buffer, size_t max_size)
   if(available == 0) {
     /* No more data in buffer */
     if(ctx->more_chunks_expected) {
-      /* More chunks will come - return 0 to signal "would block" */
+      /* More chunks will come - return 0 to signal "would block".
+       * The lexer treats this like EOF so record it; any token being
+       * matched may be incomplete. See fsp_input_would_block().
+       */
+      ctx->input_would_block = 1;
       return 0;
     } else {
       /* True EOF - no more data will ever come */
@@ -139,7 +143,6 @@ fsp_read_input(void *user_data, char *buffer, size_t max_size)
 int
 fsp_buffer_append(fsp_context *ctx, const char *data, size_t length)
 {
-  size_t unread;
   size_t new_capacity;
   char *new_buffer;
 
@@ -148,15 +151,8 @@ fsp_buffer_append(fsp_context *ctx, const char *data, size_t length)
 
   /* Check if we need to grow or compact buffer */
   if(ctx->data_length + length > ctx->buffer_capacity) {
-    /* Compact buffer (move unread data to beginning) */
-    unread = ctx->data_length - ctx->read_position;
-    if(unread > 0) {
-      memmove(ctx->stream_buffer,
-              ctx->stream_buffer + ctx->read_position,
-              unread);
-    }
-    ctx->data_length = unread;
-    ctx->read_position = 0;
+    /* Compact buffer (move retained data to beginning) */
+    fsp_buffer_compact(ctx);
 
     /* If still not enough space, grow buffer */
     if(ctx->data_length + length > ctx->buffer_capacity) {
@@ -186,24 +182,32 @@ fsp_buffer_append(fsp_context *ctx, const char *data, size_t length)
  * fsp_buffer_compact - Compact the context's stream buffer
  *
  * @ctx: The context to compact
+ *
+ * Discards data that has been read.  If rewind support is enabled by
+ * fsp_buffer_commit(), data after the commit mark is kept so that it
+ * can be read again after fsp_buffer_rewind().
  */
 void
 fsp_buffer_compact(fsp_context *ctx)
 {
-  size_t unread;
+  size_t keep;
+  size_t retained;
 
   if(!ctx)
     return;
 
-  unread = ctx->data_length - ctx->read_position;
-  if(unread > 0 && ctx->read_position > 0) {
+  keep = ctx->rewind_enabled ? ctx->mark_position : ctx->read_position;
+  retained = ctx->data_length - keep;
+  if(retained > 0 && keep > 0) {
     memmove(ctx->stream_buffer,
-            ctx->stream_buffer + ctx->read_position,
-            unread);
+            ctx->stream_buffer + keep,
+            retained);
   }
 
-  ctx->data_length = unread;
-  ctx->read_position = 0;
+  ctx->data_length = retained;
+  ctx->read_position -= keep;
+  if(ctx->rewind_enabled)
+    ctx->mark_position = 0;
 }
 
 
@@ -221,6 +225,104 @@ fsp_buffer_available(fsp_context *ctx)
     return 0;
 
   return ctx->data_length - ctx->read_position;
+}
+
+
+/**
+ * fsp_buffer_commit - Mark the input so far as complete tokens
+ *
+ * @ctx: The context
+ * @unread: Number of bytes returned by fsp_read_input() that the lexer
+ *   has not consumed yet, such as text still in the Flex buffer after
+ *   the last token
+ * @state: Lexer state to restore on rewind, or NULL
+ *
+ * Called after the lexer returns a complete token.  Moves the commit
+ * mark to the end of the consumed input, which is the read position
+ * less @unread, and saves @state for fsp_buffer_rewind().  Measuring
+ * the unread input, rather than adding up token lengths, keeps the mark
+ * correct when the lexer uses yyless(), yymore() or REJECT.
+ *
+ * The first call enables rewind support: from then on, input after the
+ * commit mark is kept by buffer compaction until it is committed.  Call
+ * it once before lexing starts.
+ *
+ * Also clears the would block flag.
+ */
+void
+fsp_buffer_commit(fsp_context *ctx, size_t unread, const fsp_lexer_state *state)
+{
+  size_t start;
+
+  if(!ctx)
+    return;
+
+  /* The mark never moves back before the previous commit */
+  start = ctx->rewind_enabled ? ctx->mark_position : 0;
+  if(unread > ctx->read_position - start)
+    unread = ctx->read_position - start;
+
+  ctx->rewind_enabled = 1;
+  ctx->mark_position = ctx->read_position - unread;
+
+  if(state)
+    ctx->lexer_state = *state;
+  else
+    memset(&ctx->lexer_state, 0, sizeof(ctx->lexer_state));
+
+  ctx->input_would_block = 0;
+}
+
+
+/**
+ * fsp_buffer_rewind - Return the read position to the commit mark
+ *
+ * @ctx: The context
+ * @state: Where to store the lexer state saved by the last commit, or
+ *   NULL
+ *
+ * Makes the input after the commit mark available to read again with
+ * fsp_read_input().  Used when the input ran out inside a token while
+ * more chunks are expected: the host discards the partial token,
+ * rewinds, and calls the lexer again after appending more input.  The
+ * lexer's own buffer must also be discarded and its state restored;
+ * postprocess-flex.py --fsp-rewind generates a function that does this.
+ *
+ * Also clears the would block flag.
+ */
+void
+fsp_buffer_rewind(fsp_context *ctx, fsp_lexer_state *state)
+{
+  if(!ctx)
+    return;
+
+  if(ctx->rewind_enabled)
+    ctx->read_position = ctx->mark_position;
+
+  if(state)
+    *state = ctx->lexer_state;
+
+  ctx->input_would_block = 0;
+}
+
+
+/**
+ * fsp_input_would_block - Check if input ran out before the real end
+ *
+ * @ctx: The context
+ *
+ * Flex treats YY_INPUT returning 0 as the end of input, so when the
+ * data runs out in the middle of a token, Flex ends the token early.
+ * This reports whether that may have happened.
+ *
+ * Returns: Non-zero if fsp_read_input() returned 0 because the
+ * available data ran out while more chunks are expected, since the last
+ * fsp_buffer_commit() or fsp_buffer_rewind().
+ */
+int
+fsp_input_would_block(fsp_context *ctx)
+{
+  return ctx ? ctx->input_would_block : 0;
 }
 
 

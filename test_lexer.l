@@ -58,6 +58,9 @@
 /* Makes yyget_lval() yyset_lval() and yylval appear */
 %option bison-bridge
 
+/* Track line numbers, to test that rewind restores them */
+%option yylineno
+
   /* definitions */
 
 %{
@@ -97,6 +100,10 @@ static void test_lexer_cleanup(yyscan_t yyscanner);
 #define YY_INPUT(buf,result,max_size) \
   result = fsp_read_input(yyextra, buf, max_size)
 
+/* Return FSP_LEXER_NEED_MORE instead of a token cut short by the end of
+ * the available input, and count matched bytes for rewind support */
+#define YY_USER_ACTION FSP_LEXER_USER_ACTION(yyextra)
+
 /* Do not need input() */
 #define YY_NO_INPUT 1
 
@@ -117,9 +124,16 @@ WS       [ \t\r\n]+
 
 {WS}     { /* skip whitespace */ }
 
+  /* Comment only at the beginning of a line, to test that rewind
+   * restores the beginning of line state.  A # elsewhere is an error. */
+^"#"[^\n]*\n { /* skip comment */ }
+
   /* Keywords */
 "print"  { return PRINT; }
 "let"    { return LET; }
+  /* Give back the whitespace with yyless(), to test that rewind does not
+   * count it as consumed */
+"let"{WS} { yyless(3); return LET; }
 "="      { return EQUALS; }
 ";"      { return SEMICOLON; }
 
@@ -146,25 +160,20 @@ WS       [ \t\r\n]+
     return STRING;
 }
 
-<LONG_STRING>.|\n {
-    /* Accumulate characters in long string */
+<LONG_STRING>[^\"]+|\" {
+    /* Accumulate text in long string.  With rewind support the whole
+     * string is matched within one lexer call, so yylval->string is
+     * always the value started by the opening quotes. */
     size_t old_len;
     char *new_str;
-    
-    /* Guard against NULL string (can happen with streaming/chunked input) */
-    if(!yylval->string) {
-      yylval->string = strdup("");
-      if(!yylval->string)
-        return ERROR;
-    }
-    
+
     old_len = strlen(yylval->string);
-    new_str = FSP_MALLOC(char*, old_len + 2);
+    new_str = FSP_MALLOC(char*, old_len + (size_t)yyleng + 1);
     if(!new_str)
       return ERROR;
-    strcpy(new_str, yylval->string);
-    new_str[old_len] = yytext[0];
-    new_str[old_len + 1] = '\0';
+    memcpy(new_str, yylval->string, old_len);
+    memcpy(new_str + old_len, yytext, (size_t)yyleng);
+    new_str[old_len + (size_t)yyleng] = '\0';
     free(yylval->string);
     yylval->string = new_str;
 }

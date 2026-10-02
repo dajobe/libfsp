@@ -1,0 +1,5 @@
+# leading comment
+let x = 1;
+# another comment
+print x;
+let	spaced  =  "tabs and spaces";

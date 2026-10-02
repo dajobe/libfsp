@@ -49,6 +49,12 @@ struct fsp_context_s {
   size_t data_length;              /* Bytes currently in buffer */
   size_t read_position;            /* Current read position for YY_INPUT */
 
+  /* Rewind support for tokens split across chunks */
+  int rewind_enabled;              /* Keep input from mark_position */
+  size_t mark_position;            /* Start of input not yet committed */
+  fsp_lexer_state lexer_state;     /* Lexer state saved at the mark */
+  int input_would_block;           /* Input ran out with more chunks expected */
+
   /* State flags */
   int more_chunks_expected;        /* 0 = EOF, 1 = more coming */
   int initialization_done;         /* Track first-time setup */

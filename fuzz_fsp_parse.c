@@ -77,6 +77,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
    * This tests various token boundary conditions */
   chunk_base = (size > 0) ? ((size_t)data[0] % 64) + 1 : 16;
   
+  /* Enable rewind support before the first token */
+  test_lexer_fsp_commit(scanner);
+
   /* Start feeding from second byte */
   p = (size > 1) ? data + 1 : data;
   remain = (size > 1) ? size - 1 : 0;
@@ -95,12 +98,12 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     is_end = (chunk >= remain);
 
-    /* Append chunk to FSP buffer */
-    if(fsp_buffer_append(ctx, (const char*)p, chunk) < 0)
+    /* Append chunk to FSP buffer, signalling EOF after the last chunk */
+    if(fsp_parse_chunk(ctx, (const char*)p, chunk, is_end) == FSP_STATUS_NO_MEMORY)
       break;
 
-    /* Feed tokens to parser */
-    while(fsp_buffer_available(ctx) > 0 || is_end) {
+    /* Feed tokens to parser until the lexer needs more input */
+    while(1) {
       TEST_PARSER_STYPE lval;
       int token;
 
@@ -109,6 +112,18 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
       /* Get next token from lexer */
       token = test_lexer_lex(&lval, scanner);
+
+      if(token == FSP_LEXER_NEED_MORE ||
+         (!token && fsp_input_would_block(ctx))) {
+        /* Input ran out, possibly inside a token: discard any partial
+         * string and rescan from the last token after the next chunk */
+        if(lval.string) {
+          free(lval.string);
+          lval.string = NULL;
+        }
+        test_lexer_fsp_rewind(scanner);
+        break;
+      }
 
       if(token == 0) {
         /* No more tokens available */
@@ -125,6 +140,8 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         /* Need more data */
         break;
       }
+
+      test_lexer_fsp_commit(scanner);
 
       if(token == ERROR) {
         /* Free any allocated string from lval before exiting */
