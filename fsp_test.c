@@ -282,6 +282,9 @@ run_streaming_parser(const char *input, size_t input_len, size_t chunk_size)
       test_lexer_fsp_commit(scanner);
 
       if(token == ERROR) {
+        /* Push EOF so the parser aborts and frees the values on its
+         * stack, which deleting the parser state does not do */
+        (void)test_parser_push_parse(pstate, 0, NULL, ctx, scanner);
         status = 1;
         goto done;
       }
