@@ -660,7 +660,8 @@ libfsp/
 ├── test_parser.y              # Example parser [testing only]
 │
 ├── RAPTOR_INTEGRATION.md      # Integration analysis example
-├── CLAUDE.md                  # Repository onboarding for AI assistants
+├── AGENTS.md                  # Agent instructions
+├── CLAUDE.md                  # Pointer to AGENTS.md
 ├── FUZZING.md                 # Fuzzing guide
 │
 ├── Makefile.am                # Automake build
