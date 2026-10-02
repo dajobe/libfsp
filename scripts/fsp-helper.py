@@ -2,23 +2,24 @@
 """
 fsp-helper - Utility for libfsp streaming parser integration.
 
-This tool provides three main functions:
-  1. Calculate optimal MIN_BUFFER_FOR_LEX value from lexer files
-  2. Generate customized streaming parser implementation
-  3. Validate lexer/parser are correctly configured for streaming
+This tool provides these functions:
+  1. Generate a streaming parser implementation using rewind support
+  2. Validate lexer/parser are correctly configured for streaming
+  3. Calculate a MIN_BUFFER_FOR_LEX value (deprecated: not needed with
+     rewind support, see "Rewind support" in scripts/README.md)
 
 Usage:
-  # Calculate MIN_BUFFER_FOR_LEX
-  fsp-helper.py calculate turtle_lexer.l
-
   # Generate streaming parser implementation
   fsp-helper.py generate --lexer-prefix turtle_lexer --parser-prefix turtle_parser
 
   # Validate configuration
   fsp-helper.py validate --lexer turtle_lexer.l --parser turtle_parser.y
 
-  # All-in-one check
+  # Validate configuration (same as validate with --lexer required)
   fsp-helper.py check --lexer turtle_lexer.l --parser turtle_parser.y
+
+  # Deprecated: calculate MIN_BUFFER_FOR_LEX
+  fsp-helper.py calculate turtle_lexer.l
 
 (C) Copyright 2025 Dave Beckett https://www.dajobe.org/
 """
@@ -156,7 +157,18 @@ def calculate_min_buffer(filename: str, verbose: bool = False, quiet: bool = Fal
 
     Returns:
         Recommended MIN_BUFFER_FOR_LEX value
+
+    Deprecated: a minimum buffer does not stop Flex ending a token early
+    when the input runs out inside it.  Use rewind support instead.
     """
+    if not quiet:
+        print(
+            "Note: MIN_BUFFER_FOR_LEX is deprecated; it does not prevent tokens"
+            " split across chunks being lexed incorrectly.  Use rewind support"
+            ' instead, see "Rewind support" in scripts/README.md.',
+            file=sys.stderr,
+        )
+
     rules = extract_rules_from_flex(filename)
 
     fixed_patterns = []
@@ -223,17 +235,20 @@ def calculate_min_buffer(filename: str, verbose: bool = False, quiet: bool = Fal
 def generate_streaming_parser(
     lexer_prefix: str,
     parser_prefix: str,
-    min_buffer: int,
     function_name: str,
     output: TextIO,
 ) -> None:
     """
     Generate a streaming parser implementation.
 
+    The generated code uses libfsp rewind support, so the lexer must
+    define YY_USER_ACTION as FSP_LEXER_USER_ACTION(yyextra) and the
+    generated lexer must be post-processed with
+    postprocess-flex.py --fsp-rewind.
+
     Args:
         lexer_prefix: Prefix for lexer functions (e.g., 'turtle_lexer')
         parser_prefix: Prefix for parser functions (e.g., 'turtle_parser')
-        min_buffer: MIN_BUFFER_FOR_LEX value
         function_name: Name of the generated function
         output: Output file handle
     """
@@ -245,17 +260,33 @@ def generate_streaming_parser(
  *
  * Lexer prefix: {lexer_prefix}
  * Parser prefix: {parser_prefix}
- * MIN_BUFFER_FOR_LEX: {min_buffer}
+ *
+ * Requires libfsp rewind support:
+ *   - the lexer defines YY_USER_ACTION as FSP_LEXER_USER_ACTION(yyextra)
+ *   - the generated lexer is post-processed with
+ *     postprocess-flex.py --fsp-rewind
  */
 
 #include <stddef.h>
 #include <string.h>
 #include "fsp.h"
-#include "{lexer_prefix}.h"
 #include "{parser_prefix}.h"
 
-/* Minimum bytes to accumulate before calling lexer */
-#define MIN_BUFFER_FOR_LEX {min_buffer}
+/* The lexer header needs the parser's semantic value type */
+#define YYSTYPE {parser_upper}_STYPE
+#include "{lexer_prefix}.h"
+
+int {function_name}(fsp_context *ctx, const char *input, size_t chunk_size, void *user_data);
+
+/* Called with the semantic value when the lexer returns without a
+ * complete token: when rewinding and at the end of input.  Define it
+ * before this code if the lexer can allocate a value while matching a
+ * token over several rules, such as a long string, for example:
+ *   #define {parser_upper}_DISCARD_LVAL(lval) free((lval)->string)
+ */
+#ifndef {parser_upper}_DISCARD_LVAL
+#define {parser_upper}_DISCARD_LVAL(lval) do {{ (void)(lval); }} while(0)
+#endif
 
 /**
  * {function_name}:
@@ -264,8 +295,13 @@ def generate_streaming_parser(
  * @chunk_size: Size of chunks to process (can be 1 byte to any size)
  * @user_data: Optional user data pointer (pass NULL if not needed)
  *
- * Parse input using streaming with buffer accumulation strategy.
- * Supports arbitrarily small chunks (including 1-byte chunks).
+ * Parse input using streaming with rewind support.  A token split
+ * across chunks is rescanned once the rest of it has been appended, so
+ * any chunk size works, including 1-byte chunks.
+ *
+ * If the lexer allocates semantic values while matching a token over
+ * several rules (such as a long string), define
+ * {parser_upper}_DISCARD_LVAL to free them.
  *
  * Return value: 0 on success, -1 on error
  */
@@ -277,10 +313,9 @@ int
   int status;
   size_t pos = 0;
   size_t input_len;
-  int final_drain = 0;
   int result = 0;
 
-  if(!ctx || !input)
+  if(!ctx || !input || !chunk_size)
     return -1;
 
   input_len = strlen(input);
@@ -304,66 +339,50 @@ int
     return -1;
   }}
 
-  /* STREAMING STRATEGY:
-   * Phase 1: Accumulate chunks until buffer has MIN_BUFFER_FOR_LEX bytes OR EOF
-   * Phase 2: Process tokens when buffer is ready
-   *
-   * This pattern allows streaming with arbitrarily small chunks (even 1 byte)
-   * while ensuring Flex always has enough lookahead to correctly identify tokens.
-   *
-   * See libfsp README.md "Streaming with Small Chunks" section for details.
-   */
-  while(pos < input_len || final_drain) {{
-    int is_eof;
+  /* Enable rewind support before the first token */
+  {lexer_prefix}_fsp_commit(scanner);
 
-    /* Phase 1: Accumulate chunks until buffer is sufficiently full */
-    while(pos < input_len && fsp_buffer_available(ctx) < MIN_BUFFER_FOR_LEX) {{
-      size_t chunk;
+  while(1) {{
+    size_t chunk;
+    int is_end;
 
-      chunk = input_len - pos;
-      if(chunk > chunk_size)
-        chunk = chunk_size;
+    /* Append the next chunk; the last one signals EOF */
+    chunk = input_len - pos;
+    if(chunk > chunk_size)
+      chunk = chunk_size;
+    is_end = (pos + chunk >= input_len);
 
-      /* Append chunk to FSP buffer */
-      if(fsp_buffer_append(ctx, input + pos, chunk) < 0) {{
-        result = -1;
-        goto cleanup;
-      }}
-
-      pos += chunk;
+    if(fsp_parse_chunk(ctx, input + pos, chunk, is_end) == FSP_STATUS_NO_MEMORY) {{
+      result = -1;
+      goto cleanup;
     }}
+    pos += chunk;
 
-    /* Check if we've reached end of input */
-    is_eof = (pos >= input_len);
-
-    if(is_eof && !final_drain) {{
-      /* Signal EOF to FSP context - no more chunks coming */
-      ctx->more_chunks_expected = 0;
-      final_drain = 1;
-    }}
-
-    /* Phase 2: Process tokens (only when buffer is full enough OR at EOF) */
-    while(fsp_buffer_available(ctx) > 0 || (is_eof && final_drain)) {{
+    /* Lex and parse until the lexer needs more input or the end */
+    while(1) {{
       {parser_upper}_STYPE lval;
       int token;
 
-      /* Don't call lexer if buffer is low and more data is coming */
-      if(!is_eof && fsp_buffer_available(ctx) < MIN_BUFFER_FOR_LEX)
-        break;  /* Get more chunks first */
-
-      /* Get next token from lexer */
+      memset(&lval, 0, sizeof(lval));
       token = {lexer_prefix}_lex(&lval, scanner);
 
-      if(token == 0) {{
-        /* No more tokens available */
-        if(!is_eof) {{
-          /* Lexer needs more data but we have more chunks coming */
-          break;
-        }}
-        /* Real EOF - done draining */
-        final_drain = 0;
+      if(token == FSP_LEXER_NEED_MORE ||
+         (!token && fsp_input_would_block(ctx))) {{
+        /* The input ran out, possibly inside a token.  Discard any
+         * partial value and rescan from the end of the last complete
+         * token after the next chunk. */
+        {parser_upper}_DISCARD_LVAL(&lval);
+        {lexer_prefix}_fsp_rewind(scanner);
         break;
       }}
+
+      if(!token) {{
+        /* Real end of input; discard any unterminated value */
+        {parser_upper}_DISCARD_LVAL(&lval);
+        goto eof;
+      }}
+
+      {lexer_prefix}_fsp_commit(scanner);
 
       /* Push token to parser */
       status = {parser_prefix}_push_parse(pstate, token, &lval, ctx, scanner);
@@ -375,12 +394,9 @@ int
         goto cleanup;
       }}
     }}
-
-    /* Exit loop if we're done draining at EOF */
-    if(!final_drain && is_eof)
-      break;
   }}
 
+eof:
   /* Push final EOF to parser */
   status = {parser_prefix}_push_parse(pstate, 0, NULL, ctx, scanner);
   if(status != 0)
@@ -446,6 +462,7 @@ class LexerValidator:
 
         self._check_options(lines)
         self._check_yy_input(lines)
+        self._check_rewind(lines)
 
         return self.issues
 
@@ -515,6 +532,33 @@ class LexerValidator:
                     file=self.filename,
                 )
             )
+
+
+    def _check_rewind(self, lines: List[str]) -> None:
+        """Check YY_USER_ACTION enables libfsp rewind support."""
+        definition = ""
+        in_definition = False
+
+        for line in lines:
+            if re.search(r"#\s*define\s+YY_USER_ACTION\b", line):
+                in_definition = True
+                definition = ""
+            if in_definition:
+                definition += line
+                if not line.rstrip().endswith("\\"):
+                    in_definition = False
+                    if "FSP_LEXER_USER_ACTION" in definition:
+                        return
+
+        self.issues.append(
+            ValidationIssue(
+                severity=Severity.WARNING,
+                message="YY_USER_ACTION is not defined as FSP_LEXER_USER_ACTION(yyextra):"
+                " tokens split across chunks may be lexed incorrectly"
+                " (see 'Rewind support' in scripts/README.md)",
+                file=self.filename,
+            )
+        )
 
 
 class ParserValidator:
@@ -645,14 +689,14 @@ def print_issues(issues: List[ValidationIssue], strict: bool = False) -> int:
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="libfsp helper - Calculate, generate, and validate streaming parsers",
+        description="libfsp helper - Generate and validate streaming parsers",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # Calculate subcommand
-    calc = subparsers.add_parser("calculate", aliases=["calc"], help="Calculate MIN_BUFFER_FOR_LEX value")
+    calc = subparsers.add_parser("calculate", aliases=["calc"], help="Calculate MIN_BUFFER_FOR_LEX value (deprecated)")
     calc.add_argument("lexer_file", help="Flex lexer file (.l)")
     calc.add_argument("-v", "--verbose", action="store_true", help="Show detailed analysis")
     calc.add_argument("-q", "--quiet", action="store_true", help="Only output the number")
@@ -661,7 +705,12 @@ def main() -> int:
     gen = subparsers.add_parser("generate", aliases=["gen"], help="Generate streaming parser implementation")
     gen.add_argument("--lexer-prefix", required=True, help="Lexer function prefix (e.g., turtle_lexer)")
     gen.add_argument("--parser-prefix", required=True, help="Parser function prefix (e.g., turtle_parser)")
-    gen.add_argument("--min-buffer", type=int, default=64, help="MIN_BUFFER_FOR_LEX value (default: 64)")
+    gen.add_argument(
+        "--min-buffer",
+        type=int,
+        default=None,
+        help="Ignored (deprecated): not needed with rewind support",
+    )
     gen.add_argument(
         "--function-name", help="Generated function name (default: {lexer_prefix}_streaming_parse)"
     )
@@ -673,8 +722,8 @@ def main() -> int:
     val.add_argument("--parser", "-p", help="Bison parser file (.y)")
     val.add_argument("--strict", "-s", action="store_true", help="Treat warnings as errors")
 
-    # Check subcommand (calculate + validate)
-    check = subparsers.add_parser("check", help="Calculate MIN_BUFFER and validate configuration")
+    # Check subcommand (validate with the lexer required)
+    check = subparsers.add_parser("check", help="Validate lexer and parser configuration")
     check.add_argument("--lexer", "-l", required=True, help="Flex lexer file (.l)")
     check.add_argument("--parser", "-p", help="Bison parser file (.y)")
     check.add_argument("--strict", "-s", action="store_true", help="Treat warnings as errors")
@@ -696,7 +745,6 @@ def main() -> int:
         generate_streaming_parser(
             lexer_prefix=args.lexer_prefix,
             parser_prefix=args.parser_prefix,
-            min_buffer=args.min_buffer,
             function_name=function_name,
             output=args.output,
         )
@@ -720,16 +768,10 @@ def main() -> int:
 
         return print_issues(all_issues, strict=args.strict)
 
-    # Check (calculate + validate)
+    # Check (validate with the lexer required)
     elif args.command == "check":
         print("=" * 70)
-        print("STEP 1: Calculate MIN_BUFFER_FOR_LEX")
-        print("=" * 70)
-        min_buffer = calculate_min_buffer(args.lexer, verbose=False, quiet=False)
-
-        print()
-        print("=" * 70)
-        print("STEP 2: Validate Configuration")
+        print("Validate Configuration")
         print("=" * 70)
 
         all_issues = []
@@ -747,8 +789,7 @@ def main() -> int:
             print("=" * 70)
             print("SUMMARY")
             print("=" * 70)
-            print(f"✓ Configuration is correct for streaming")
-            print(f"✓ Recommended MIN_BUFFER_FOR_LEX: {min_buffer}")
+            print("✓ Configuration is correct for streaming")
 
         return result
 
