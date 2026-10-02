@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cc: gcc
+            cxx: g++
+          - cc: clang
+            cxx: clang++
+    runs-on: ubuntu-latest
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      CFLAGS: -Wall -Wextra -Wpedantic -Werror
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake bison flex libtool clang g++
+      - name: Generate configure script
+        run: |
+          mkdir -p build
+          autoreconf -fi
+      - name: Configure strict build
+        run: ./configure --enable-maintainer-mode
+      - name: Build and run tests
+        run: |
+          make -j2
+          make check
+      - name: Run parser equivalence fuzzer
+        run: |
+          make -f GNUMakefile -j4 fuzz
+          make -f GNUMakefile -j4 fuzz-parse-run FUZZ_TIME=10
+      - name: Build and test release package
+        run: make distcheck DISTCHECK_CONFIGURE_FLAGS=--enable-maintainer-mode
+      - name: Test standalone build from release package
+        run: |
+          standalone_dir=$(mktemp -d)
+          tar -xzf libfsp-*.tar.gz -C "$standalone_dir" --strip-components=1
+          make -C "$standalone_dir" -f GNUMakefile clean
+          make -C "$standalone_dir" -f GNUMakefile -j4 check
