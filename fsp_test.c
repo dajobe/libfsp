@@ -1343,6 +1343,27 @@ int main(int argc, char **argv)
     fsp_destroy(ctx2);
   }
 
+  TEST("Generated parser rejects unterminated triple-quoted input at EOF");
+  {
+    int result;
+
+    test_parser_reset();
+    test_parser_set_quiet(1);
+    ctx = fsp_create();
+    if(!ctx) {
+      FAIL("Failed to allocate generated parser EOF test context");
+    } else {
+      result = test_generated_parse(ctx, "print \"\"\"unfinished", 1, NULL);
+      if(result == 0)
+        FAIL("Generated parser accepted an unterminated string");
+      else
+        PASS();
+      fsp_destroy(ctx);
+    }
+    test_parser_free_statements();
+    test_parser_set_quiet(0);
+  }
+
   /* Summary */
   fprintf(stderr, "\n==================\n");
   fprintf(stderr, "Tests run: %d\n", test_count);

@@ -187,6 +187,11 @@ WS       [ \t\r\n]+
 <LONG_STRING><<EOF>> {
     if(fsp_input_would_block(yyextra))
       return FSP_LEXER_NEED_MORE;
+    /* ERROR has no semantic destructor in the example grammar. */
+    free(yylval->string);
+    yylval->string = NULL;
+    /* Let a recovering push parser see real EOF on the next lexer call. */
+    BEGIN(INITIAL);
     return ERROR;
 }
 
