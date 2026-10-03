@@ -210,6 +210,11 @@ source rather than written in the `.l` file. The lexer's `yyextra` must be the
    while `fsp_input_would_block()` is true, call `PREFIXfsp_rewind()`, append
    more input and call the lexer again.
 
+With `--fsp-rewind`, the postprocessor changes the guarded `YY_READ_BUF_SIZE`
+default to `INT_MAX`. Flex still limits reads to available scanner buffer space,
+so refills grow with long tokens rather than repeatedly rebuilding token state
+after fixed-size reads. Hosts can override the default in their lexer source.
+
 See "Rewind Support" in the top-level README.md for the details and the host's
 responsibilities, and `run_streaming_parser()` in `fsp_test.c` for a complete
 example.

@@ -37,7 +37,8 @@ scripts provide:
 - **postprocess-flex.py / postprocess-bison.py**: Fix warnings in generated code
   to ensure **warning-free** compilation at high warning levels (including
   `-Wall -Wextra -Werror`). `postprocess-flex.py --fsp-rewind` also adds the
-  lexer functions for [rewind support](#rewind-support)
+  lexer functions for [rewind support](#rewind-support) and lets refills grow
+  with the scanner buffer when matching long tokens
 - **fsp-helper.py**: Integration assistant with four commands:
   - `generate` - Create customized streaming parser implementation
   - `validate` - Verify lexer/parser are correctly configured for streaming
@@ -259,6 +260,8 @@ AM_CPPFLAGS += -DHAVE_FSP_CONFIG_H -I$(top_srcdir)/libfsp
 
 **3. Use postprocess scripts with project config:**
 
+<!-- markdownlint-disable MD010 -->
+
 ```makefile
 turtle_lexer.c: turtle_lexer.l turtle_parser.c \
                 $(top_srcdir)/libfsp/scripts/postprocess-flex.py
@@ -268,6 +271,8 @@ turtle_lexer.c: turtle_lexer.l turtle_parser.c \
 	  turtle_lexer.c > turtle_lexer.t
 	mv -f turtle_lexer.t turtle_lexer.c
 ```
+
+<!-- markdownlint-enable MD010 -->
 
 **4. Streaming parser implementation pattern:**
 
@@ -563,6 +568,14 @@ Host responsibilities:
 - **Very long tokens split over many chunks** are rescanned from their start
   each time more input is appended, so the work for such a token grows with the
   number of chunks it spans.
+
+`postprocess-flex.py --fsp-rewind` also sets the guarded `YY_READ_BUF_SIZE`
+default to `INT_MAX`. Flex limits each actual read to the available space in its
+scanner buffer; this does not request an `INT_MAX` allocation. As that buffer
+grows with a long token, refills grow too, avoiding repeated token-state
+rebuilds after fixed-size reads. `YY_INPUT` reads only data already buffered in
+libfsp. An explicit host definition of `YY_READ_BUF_SIZE` overrides this
+default.
 
 ## Streaming with Small Chunks
 

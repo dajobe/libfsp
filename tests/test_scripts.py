@@ -7,7 +7,6 @@ import subprocess
 import tempfile
 import unittest
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HELPER = ROOT / "scripts" / "fsp-helper.py"
 POSTPROCESS_FLEX = ROOT / "scripts" / "postprocess-flex.py"
@@ -139,12 +138,8 @@ class ScriptRegressionTests(unittest.TestCase):
             )
             generated = output.read_text(encoding="utf-8")
             self.assertIn("yycleanup(yyscanner);", generated)
-            self.assertIn(
-                "test_lexer_fsp_commit(yyscan_t yyscanner)", generated
-            )
-            self.assertIn(
-                "test_lexer_fsp_rewind(yyscan_t yyscanner)", generated
-            )
+            self.assertIn("test_lexer_fsp_commit(yyscan_t yyscanner)", generated)
+            self.assertIn("test_lexer_fsp_rewind(yyscan_t yyscanner)", generated)
 
     def test_reject_rule_falls_through_to_next_match(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -153,7 +148,7 @@ class ScriptRegressionTests(unittest.TestCase):
             lexer.write_text(
                 "%option noyywrap\n%%\n"
                 '"reject"[0-9]+ { REJECT; }\n'
-                "[A-Za-z][A-Za-z0-9]* { printf(\"ID:%s\\n\", yytext); }\n"
+                '[A-Za-z][A-Za-z0-9]* { printf("ID:%s\\n", yytext); }\n'
                 ".|\\n ;\n%%\n"
                 "int main(void) { return yylex(); }\n",
                 encoding="utf-8",
@@ -178,6 +173,83 @@ class ScriptRegressionTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, "ID:reject7\n")
+
+    def test_streaming_refills_grow_with_long_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            generated_dir = pathlib.Path(directory)
+            lexer = generated_dir / "refill.l"
+            lexer.write_text(
+                "%option reentrant noyywrap nounput noinput never-interactive\n"
+                '%option extra-type="fsp_context*"\n'
+                "%{\n"
+                "#include <stdlib.h>\n#include <string.h>\n"
+                '#include "fsp.h"\n'
+                "void yyfsp_commit(void *scanner);\n"
+                "static size_t read_calls;\n"
+                "#define YY_FATAL_ERROR(msg) abort()\n"
+                "#define yycleanup(scanner) ((void)(scanner))\n"
+                "#define YY_USER_ACTION FSP_LEXER_USER_ACTION(yyextra)\n"
+                "#define YY_INPUT(buf,result,max_size) do { \\\n"
+                " read_calls++; \\\n"
+                " result = fsp_read_input(yyextra, buf, max_size); \\\n"
+                "} while(0)\n"
+                "%}\n%%\n[a-z]+ { return 1; }\n.|\\n ;\n%%\n"
+                "int main(void) {\n"
+                " const size_t length = 1024 * 1024;\n"
+                " char *input = malloc(length + 1);\n"
+                " fsp_context *ctx = fsp_create();\n"
+                " yyscan_t scanner;\n"
+                " int failed;\n"
+                " if(!input || !ctx || yylex_init(&scanner)) return 1;\n"
+                " memset(input, 'x', length); input[length] = ' ';\n"
+                " yyset_extra(ctx, scanner);\n"
+                " yyfsp_commit(scanner);\n"
+                " if(fsp_parse_chunk(ctx, input, length + 1, 1) != FSP_STATUS_OK)\n"
+                "   return 1;\n"
+                " failed = yylex(scanner) != 1 ||\n"
+                "          yyget_leng(scanner) != (int)length;\n"
+                " if(read_calls > 32) failed = 1;\n"
+                " yylex_destroy(scanner); fsp_destroy(ctx); free(input);\n"
+                " return failed;\n}\n",
+                encoding="utf-8",
+            )
+            result = self.run_command(
+                ["flex", "-o", "raw.c", str(lexer)], cwd=generated_dir
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = self.run_command(
+                [
+                    "python3",
+                    str(POSTPROCESS_FLEX),
+                    "--fsp-rewind",
+                    "--output",
+                    "processed.c",
+                    "raw.c",
+                ],
+                cwd=generated_dir,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = self.run_command(
+                [
+                    os.environ.get("CC", "cc"),
+                    "-std=c11",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I",
+                    str(ROOT),
+                    "processed.c",
+                    str(ROOT / "fsp.c"),
+                    "-o",
+                    "refill",
+                ],
+                cwd=generated_dir,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = self.run_command(
+                [str(generated_dir / "refill")], cwd=generated_dir, timeout=10
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

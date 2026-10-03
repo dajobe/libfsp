@@ -183,20 +183,18 @@ def fix(
             else:
                 have_macro = "HAVE_CONFIG_H"
 
-            f_out.write(
-                f"""#ifdef {have_macro}
+            f_out.write(f"""#ifdef {have_macro}
 #include <{config_header}>
 #endif
 
-"""
-            )
+""")
             line_offset += 4
             out_lines += 4
 
             # Read entire source lines
             s = list(enumerate(infile, start=1))
             while s:
-                (line_number, line) = s.pop(0)
+                line_number, line = s.pop(0)
 
                 # Find lexer prefix
                 m = re.match(r"^void\s+(.+?)restart\s*\(.*;$", line)
@@ -215,6 +213,25 @@ def fix(
                 # Generated header defines PREFIXIN_HEADER
                 if re.match(r"^#define\s+\w*IN_HEADER\s+1\s*$", line):
                     is_header = True
+
+                # Fixed-size refills repeatedly rebuild the state of a long
+                # token. Let Flex fill the available scanner buffer space;
+                # YY_INPUT still reads only bytes already buffered by libfsp.
+                # Keep the generated guard so hosts can override the default.
+                if fsp_rewind and not is_header:
+                    if re.match(r"^#ifndef YY_READ_BUF_SIZE\s*$", line):
+                        added = (
+                            "/* Fill available scanner buffer space to avoid"
+                            " fixed-size token rescanning. */\n"
+                            "#include <limits.h>\n"
+                        )
+                        line = added + line
+                        line_offset += added.count("\n")
+                    line = re.sub(
+                        r"^(#define YY_READ_BUF_SIZE)\s+\d+\s*$",
+                        r"\1 INT_MAX\n",
+                        line,
+                    )
 
                 # Add rewind support prototypes at the end of the header
                 if (
@@ -243,7 +260,7 @@ def fix(
                 ):
                     line_offset -= 1  # skip current line
                     while not line.endswith("}\n"):
-                        (line_number, line) = s.pop(0)
+                        line_number, line = s.pop(0)
                         line_offset -= 1  # skipped a line
                     continue
 
@@ -301,7 +318,7 @@ def fix(
                         line,
                     )
                     if m:
-                        (line_prefix, rest) = m.groups()
+                        line_prefix, rest = m.groups()
                         line = f"""\
 {line_prefix}/* clean up leaks if any before freeing yyscanner */
 {line_prefix}{prefix}cleanup(yyscanner);
