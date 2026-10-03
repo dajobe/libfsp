@@ -62,6 +62,7 @@ struct fsp_context_s {
   size_t mark_position;            /* Start of input not yet committed */
   fsp_lexer_state lexer_state;     /* Lexer state saved at the mark */
   int input_would_block;           /* Input ran out with more chunks expected */
+  size_t lexer_retry_size;         /* Retained bytes required before retrying */
 
   /* State flags */
   int more_chunks_expected;        /* 0 = EOF, 1 = more coming */

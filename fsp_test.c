@@ -47,6 +47,9 @@ static int test_failed = 0;
 /* Line number reached by the lexer in the last streaming parse */
 static int last_lineno = 0;
 
+/* Number of lexer batches in the last streaming parse, for retry bounds. */
+static size_t last_lexer_batches = 0;
+
 /* Helper function to read file into memory */
 static char*
 read_file(const char *filename, size_t *length)
@@ -229,6 +232,7 @@ run_streaming_parser_plan(const char *input, size_t input_len,
 
   /* Reset parser state before test */
   test_parser_reset();
+  last_lexer_batches = 0;
 
   /* Create FSP context */
   ctx = fsp_create();
@@ -302,6 +306,11 @@ run_streaming_parser_plan(const char *input, size_t input_len,
       }
       eof_sent = 1;
     }
+
+    if(!fsp_input_ready(ctx))
+      continue;
+
+    last_lexer_batches++;
 
     /* Lex and parse until the lexer needs more input or the end */
     while(1) {
@@ -1343,25 +1352,230 @@ int main(int argc, char **argv)
     fsp_destroy(ctx2);
   }
 
-  TEST("Generated parser rejects unterminated triple-quoted input at EOF");
+  TEST("Retry scheduling handles the cutoff, doubling, commit and EOF");
   {
-    int result;
+    char data[1024];
+    char readback[1024];
+    int ok = 1;
 
-    test_parser_reset();
-    test_parser_set_quiet(1);
+    memset(data, 'x', sizeof(data));
     ctx = fsp_create();
     if(!ctx) {
-      FAIL("Failed to allocate generated parser EOF test context");
+      FAIL("Failed to allocate retry test context");
     } else {
-      result = test_generated_parse(ctx, "print \"\"\"unfinished", 1, NULL);
-      if(result == 0)
-        FAIL("Generated parser accepted an unterminated string");
-      else
+      fsp_buffer_commit(ctx, 0, NULL);
+      if(fsp_input_ready(ctx) || fsp_input_ready(NULL))
+        ok = 0;
+
+      /* Small unfinished input remains eager. */
+      if(fsp_parse_chunk(ctx, data, 255, 0) != FSP_STATUS_NEED_DATA ||
+         !fsp_input_ready(ctx) || fsp_read_input(ctx, readback, 255) != 255 ||
+         fsp_read_input(ctx, readback, 1) != 0)
+        ok = 0;
+      fsp_buffer_rewind(ctx, NULL);
+      if(!fsp_input_ready(ctx) || ctx->lexer_retry_size != 0)
+        ok = 0;
+
+      /* Exactly 256 retained bytes need another 256 before retrying. */
+      if(fsp_parse_chunk(ctx, data, 1, 0) != FSP_STATUS_NEED_DATA ||
+         fsp_read_input(ctx, readback, 256) != 256 ||
+         fsp_read_input(ctx, readback, 1) != 0)
+        ok = 0;
+      fsp_buffer_rewind(ctx, NULL);
+      if(fsp_input_ready(ctx) || ctx->lexer_retry_size != 512 ||
+         fsp_input_would_block(ctx))
+        ok = 0;
+      if(fsp_parse_chunk(ctx, data, 255, 0) != FSP_STATUS_NEED_DATA ||
+         fsp_input_ready(ctx) ||
+         fsp_parse_chunk(ctx, data, 1, 0) != FSP_STATUS_NEED_DATA ||
+         !fsp_input_ready(ctx))
+        ok = 0;
+
+      if(fsp_read_input(ctx, readback, 512) != 512 ||
+         fsp_read_input(ctx, readback, 1) != 0)
+        ok = 0;
+      fsp_buffer_rewind(ctx, NULL);
+      if(fsp_input_ready(ctx) || ctx->lexer_retry_size != 1024)
+        ok = 0;
+
+      /* Commit clears the wait; an explicit, unblocked rewind adds none. */
+      fsp_buffer_commit(ctx, 0, NULL);
+      if(!fsp_input_ready(ctx) || ctx->lexer_retry_size != 0)
+        ok = 0;
+      fsp_buffer_rewind(ctx, NULL);
+      if(!fsp_input_ready(ctx) || ctx->lexer_retry_size != 0)
+        ok = 0;
+
+      if(fsp_read_input(ctx, readback, 512) != 512 ||
+         fsp_read_input(ctx, readback, 1) != 0)
+        ok = 0;
+      fsp_buffer_rewind(ctx, NULL);
+      if(fsp_input_ready(ctx) ||
+         fsp_parse_chunk(ctx, NULL, 0, 1) != FSP_STATUS_OK ||
+         !fsp_input_ready(ctx))
+        ok = 0;
+
+      if(ok)
         PASS();
+      else
+        FAIL("Retry scheduling changed cutoff, growth, reset or EOF behavior");
       fsp_destroy(ctx);
     }
-    test_parser_free_statements();
-    test_parser_set_quiet(0);
+  }
+
+  TEST("Retry thresholds survive compaction and saturate on overflow");
+  {
+    char data[1024];
+    char readback[1024];
+    int ok = 1;
+
+    memset(data, 'x', sizeof(data));
+    ctx = fsp_create();
+    if(!ctx) {
+      FAIL("Failed to allocate retry compaction test context");
+    } else {
+      fsp_buffer_commit(ctx, 0, NULL);
+      if(fsp_parse_chunk(ctx, data, 1024, 0) != FSP_STATUS_NEED_DATA ||
+         fsp_read_input(ctx, readback, 1024) != 1024)
+        ok = 0;
+      fsp_buffer_commit(ctx, 256, NULL);
+      if(fsp_read_input(ctx, readback, 1) != 0)
+        ok = 0;
+      fsp_buffer_rewind(ctx, NULL);
+      fsp_buffer_compact(ctx);
+      if(fsp_input_ready(ctx) || ctx->lexer_retry_size != 512 ||
+         fsp_parse_chunk(ctx, data, 256, 0) != FSP_STATUS_NEED_DATA ||
+         !fsp_input_ready(ctx) || fsp_buffer_available(ctx) != 512)
+        ok = 0;
+
+      /* Synthetic sizes test overflow without an impossible allocation.
+       * No input is read or appended while these sizes are installed. */
+      ctx->data_length = (size_t)-1 / 2 + 1;
+      ctx->read_position = ctx->data_length;
+      ctx->mark_position = 0;
+      ctx->input_would_block = 1;
+      fsp_buffer_rewind(ctx, NULL);
+      if(ctx->lexer_retry_size != (size_t)-1 || fsp_input_ready(ctx))
+        ok = 0;
+      ctx->data_length = 0;
+      ctx->read_position = 0;
+      if(fsp_parse_chunk(ctx, NULL, 0, 1) != FSP_STATUS_OK ||
+         !fsp_input_ready(ctx))
+        ok = 0;
+
+      if(ok)
+        PASS();
+      else
+        FAIL("Retry threshold changed after compaction or overflowed");
+      fsp_destroy(ctx);
+    }
+  }
+
+  TEST("Long tokens retain values and locations with bounded lexer retries");
+  {
+    const size_t lengths[] = { 64 * 1024, 1024 * 1024 };
+    const size_t chunks[] = { 1, 25, 4096 };
+    size_t l, c;
+    int triple, separate_eof;
+    int failures = 0;
+
+    for(l = 0; l < sizeof(lengths) / sizeof(lengths[0]); l++) {
+      for(triple = 0; triple <= 1; triple++) {
+        const char *prefix = triple ? "print \"\"\"" : "print \"";
+        const char *suffix = triple ? "\"\"\";\nprint \"after\";\n" :
+                                     "\";\nprint \"after\";\n";
+        size_t prefix_len = strlen(prefix);
+        size_t input_len = prefix_len + lengths[l] + strlen(suffix);
+        char *input = (char*)malloc(input_len + 1);
+        int expected_value_line;
+        int expected_value_column;
+        if(!input) {
+          failures++;
+          continue;
+        }
+        memcpy(input, prefix, prefix_len);
+        memset(input + prefix_len, 'x', lengths[l]);
+        memcpy(input + prefix_len + lengths[l], suffix, strlen(suffix) + 1);
+
+        /* Compare locations to a whole-input parse. Triple-quoted values
+         * use the closing rule's location in this test language. */
+        if(run_streaming_parser_plan(input, input_len, input_len,
+                                      NULL, 0, 0) < 0 ||
+           !test_parser_get_statements()) {
+          failures++;
+          free(input);
+          continue;
+        }
+        expected_value_line = test_parser_get_statements()->value_line;
+        expected_value_column = test_parser_get_statements()->value_column;
+        test_parser_free_statements();
+
+        for(c = 0; c < sizeof(chunks) / sizeof(chunks[0]); c++) {
+          for(separate_eof = 0; separate_eof <= 1; separate_eof++) {
+            statement_node *stmt;
+            if(run_streaming_parser_plan(input, input_len, chunks[c],
+                                          NULL, 0, separate_eof) < 0) {
+              failures++;
+              continue;
+            }
+            stmt = test_parser_get_statements();
+            if(last_lexer_batches > 512 || !stmt || !stmt->value ||
+               strlen(stmt->value) != lengths[l] ||
+               memcmp(stmt->value, input + prefix_len, lengths[l]) != 0 ||
+               stmt->value_line != expected_value_line ||
+               stmt->value_column != expected_value_column ||
+               !stmt->next || stmt->next->line != 2 ||
+               strcmp(stmt->next->value, "after") || stmt->next->next) {
+              fprintf(stderr, "\n  Failed %zu-byte %s token, chunks=%zu, "
+                      "separate EOF=%d, batches=%zu", lengths[l],
+                      triple ? "triple-quoted" : "quoted", chunks[c],
+                      separate_eof, last_lexer_batches);
+              failures++;
+            }
+            test_parser_free_statements();
+          }
+        }
+
+        /* The generated integration must use the same scheduling API. */
+        test_parser_reset();
+        ctx = fsp_create();
+        if(!ctx || test_generated_parse(ctx, input, 1, NULL) != 0) {
+          failures++;
+        } else {
+          statement_node *stmt = test_parser_get_statements();
+          if(!stmt || !stmt->value || strlen(stmt->value) != lengths[l] ||
+             memcmp(stmt->value, input + prefix_len, lengths[l]) != 0 ||
+             !stmt->next || strcmp(stmt->next->value, "after") ||
+             stmt->next->next)
+            failures++;
+        }
+        test_parser_free_statements();
+        fsp_destroy(ctx);
+
+        /* EOF must flush a throttled unterminated token and report failure,
+         * whether EOF accompanies the data or arrives in an empty chunk. */
+        input[prefix_len + lengths[l]] = '\0';
+        test_parser_set_quiet(1);
+        for(separate_eof = 0; separate_eof <= 1; separate_eof++) {
+          if(run_streaming_parser_plan(input, prefix_len + lengths[l], 25,
+                                        NULL, 0, separate_eof) == 0)
+            failures++;
+        }
+        test_parser_reset();
+        ctx = fsp_create();
+        if(!ctx || test_generated_parse(ctx, input, 25, NULL) == 0)
+          failures++;
+        test_parser_free_statements();
+        fsp_destroy(ctx);
+        test_parser_set_quiet(0);
+        free(input);
+      }
+    }
+
+    if(failures)
+      FAIL("Long token values, locations or retry bounds differed");
+    else
+      PASS();
   }
 
   /* Summary */

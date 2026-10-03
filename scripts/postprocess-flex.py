@@ -84,8 +84,8 @@ def fsp_rewind_source_code(public_prefix: str) -> str:
  * every complete token.  It records how much input the lexer consumed
  * and saves the start condition, beginning of line flag and location.  When the lexer returns FSP_LEXER_NEED_MORE, or
  * returns 0 while fsp_input_would_block() is true, call
- * {public_prefix}fsp_rewind() and call the lexer again after more input
- * has been appended.
+ * {public_prefix}fsp_rewind(), append more input, and call the lexer again
+ * when fsp_input_ready() permits it.
  */
 void {public_prefix}fsp_commit(yyscan_t yyscanner);
 void {public_prefix}fsp_rewind(yyscan_t yyscanner);

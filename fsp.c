@@ -34,6 +34,12 @@
 #define FSP_DEFAULT_BUFFER_SIZE (64 * 1024)  /* 64KB */
 #endif
 
+/* Retained, uncommitted input in bytes before retries wait for doubling.
+ * This tuning cutoff is not a token length limit: smaller input is retried
+ * after each chunk; at or above it, doubling bounds repeated rescanning
+ * while potentially delaying callbacks. EOF always allows a retry. */
+#define FSP_LEXER_RETRY_MIN_BYTES 256
+
 /**
  * fsp_create - Create a new streaming parser context
  *
@@ -247,7 +253,7 @@ fsp_buffer_available(fsp_context *ctx)
  * commit mark is kept by buffer compaction until it is committed.  Call
  * it once before lexing starts.
  *
- * Also clears the would block flag.
+ * Also clears the would block flag and any pending retry threshold.
  */
 void
 fsp_buffer_commit(fsp_context *ctx, size_t unread, const fsp_lexer_state *state)
@@ -271,6 +277,7 @@ fsp_buffer_commit(fsp_context *ctx, size_t unread, const fsp_lexer_state *state)
     memset(&ctx->lexer_state, 0, sizeof(ctx->lexer_state));
 
   ctx->input_would_block = 0;
+  ctx->lexer_retry_size = 0;
 }
 
 
@@ -284,15 +291,20 @@ fsp_buffer_commit(fsp_context *ctx, size_t unread, const fsp_lexer_state *state)
  * Makes the input after the commit mark available to read again with
  * fsp_read_input().  Used when the input ran out inside a token while
  * more chunks are expected: the host discards the partial token,
- * rewinds, and calls the lexer again after appending more input.  The
+ * rewinds, and checks fsp_input_ready() after appending more input. The
  * lexer's own buffer must also be discarded and its state restored;
  * postprocess-flex.py --fsp-rewind generates a function that does this.
  *
+ * When the input ran out with more chunks expected, retained input at
+ * or above FSP_LEXER_RETRY_MIN_BYTES must double before the next retry.
+ * This bounds repeated rescanning; EOF bypasses the retry threshold.
  * Also clears the would block flag.
  */
 void
 fsp_buffer_rewind(fsp_context *ctx, fsp_lexer_state *state)
 {
+  size_t retained;
+
   if(!ctx)
     return;
 
@@ -302,7 +314,44 @@ fsp_buffer_rewind(fsp_context *ctx, fsp_lexer_state *state)
   if(state)
     *state = ctx->lexer_state;
 
+  ctx->lexer_retry_size = 0;
+  retained = fsp_buffer_available(ctx);
+  if(ctx->input_would_block && ctx->more_chunks_expected &&
+     retained >= FSP_LEXER_RETRY_MIN_BYTES)
+    ctx->lexer_retry_size =
+      retained > (size_t)-1 / 2 ? (size_t)-1 : retained * 2;
+
   ctx->input_would_block = 0;
+}
+
+
+/**
+ * fsp_input_ready - Check whether a host may start a lexer batch
+ *
+ * @ctx: The context
+ *
+ * Call after appending a chunk with fsp_parse_chunk(), before entering
+ * the host's lexer loop. A large unfinished token waits for retained
+ * input to double after a rewind. Completing a token clears that wait;
+ * EOF always permits processing the pending input, including an empty
+ * final chunk. Do not use this between tokens: the lexer may still have
+ * unread input in its own buffer.
+ *
+ * Returns: Non-zero if buffered input may be lexed or EOF was signalled,
+ *   zero if more input is needed or @ctx is NULL.
+ */
+int
+fsp_input_ready(fsp_context *ctx)
+{
+  size_t available;
+
+  if(!ctx)
+    return 0;
+  if(!ctx->more_chunks_expected)
+    return 1;
+
+  available = fsp_buffer_available(ctx);
+  return available > 0 && available >= ctx->lexer_retry_size;
 }
 
 

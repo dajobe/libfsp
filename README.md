@@ -239,6 +239,7 @@ Raptor's integration (commit 292ec8bd) demonstrates the complete pattern:
 #define fsp_buffer_compact raptor_fsp_buffer_compact
 #define fsp_buffer_rewind raptor_fsp_buffer_rewind
 #define fsp_input_would_block raptor_fsp_input_would_block
+#define fsp_input_ready raptor_fsp_input_ready
 #define fsp_read_input raptor_fsp_read_input
 #define fsp_set_user_data raptor_fsp_set_user_data
 #define fsp_get_user_data raptor_fsp_get_user_data
@@ -300,7 +301,11 @@ fsp_set_user_data(turtle_parser->fsp_ctx, rdf_parser);
 /* Enable rewind support before the first token */
 turtle_lexer_fsp_commit(scanner);
 
-/* For each chunk: lex until the lexer needs more input */
+/* After feeding a chunk, wait if a pending retry needs more input. */
+if(!fsp_input_ready(fsp_ctx))
+  return 0;
+
+/* Lex until the lexer needs more input */
 while(1) {
   token = turtle_lexer_lex(&lval, scanner);
   if(token == FSP_LEXER_NEED_MORE ||
@@ -396,6 +401,11 @@ void fsp_buffer_commit(fsp_context *ctx, size_t unread, const fsp_lexer_state *s
 /* Return to the commit mark and get the saved lexer state */
 void fsp_buffer_rewind(fsp_context *ctx, fsp_lexer_state *state);
 
+/* Check after feeding a chunk, before starting a lexer batch.
+ * Rewinds throttle retries; commits clear the wait; EOF always permits
+ * processing. Do not check between tokens buffered inside the lexer. */
+int fsp_input_ready(fsp_context *ctx);
+
 /* Non-zero if the input ran out while more chunks are expected */
 int fsp_input_would_block(fsp_context *ctx);
 
@@ -446,8 +456,9 @@ the `PREFIXfsp_commit()` and `PREFIXfsp_rewind()` functions.
 
 ### In your host code (proper streaming integration)
 
-Append each chunk, then lex and parse until the lexer needs more input. Commit
-after every complete token and rewind when the input runs out:
+Append each chunk, check `fsp_input_ready()`, then lex and parse until the lexer
+needs more input. Commit after every complete token and rewind when the input
+runs out:
 
 ```c
 #include <fsp.h>
@@ -462,8 +473,11 @@ parser_pstate *pstate;
 lexer_fsp_commit(scanner);
 
 while(1) {
-    /* Append the next chunk; is_end is non-zero for the last one */
+    /* Read and append the next chunk; is_end marks the last one */
     fsp_parse_chunk(ctx, chunk, chunk_size, is_end);
+
+    if(!fsp_input_ready(ctx))
+        continue;  /* Feed the next chunk before retrying the lexer */
 
     /* Lex and parse until the lexer needs more input or the end */
     while(1) {
@@ -488,7 +502,6 @@ while(1) {
 
     if(!has_more_data)
         break;
-    /* Read the next chunk... */
 }
 
 eof:
@@ -547,8 +560,9 @@ Rewind support handles this by rescanning:
 4. When the lexer returns `FSP_LEXER_NEED_MORE`, or returns 0 while
    `fsp_input_would_block()` is true, the host calls `PREFIXfsp_rewind()`, which
    returns the read position to the commit mark, discards the Flex buffer and
-   restores the saved Flex state. The host then appends the next chunk and calls
-   the lexer again, which rescans the token from its start.
+   restores the saved Flex state. The host then appends more input and calls
+   `fsp_input_ready()` before starting another lexer batch, which rescans the
+   token from its start.
 
 This works with any chunk size, including 1-byte chunks, and with tokens of any
 length.
@@ -565,9 +579,24 @@ Host responsibilities:
   applies to a semantic value the lexer allocates before returning
   `FSP_LEXER_NEED_MORE`; code from `fsp-helper.py generate` calls
   `PARSER_DISCARD_LVAL()` for this.
-- **Very long tokens split over many chunks** are rescanned from their start
-  each time more input is appended, so the work for such a token grows with the
-  number of chunks it spans.
+- **Retry scheduling** requires the host to check `fsp_input_ready()` after
+  feeding each chunk and before entering its lexer loop. Do not check between
+  individual tokens: Flex may still hold unread input in its own buffer.
+
+### Retry scheduling and long tokens
+
+After a rewind caused by exhausted input, libfsp retries eagerly while retained,
+uncommitted input is below `FSP_LEXER_RETRY_MIN_BYTES` (256 bytes). At or above
+that cutoff, `fsp_input_ready()` waits for the retained input to double before
+allowing another lexer batch. Repeated attempts therefore scan geometrically
+growing prefixes instead of rescanning after every small chunk. The cutoff is a
+tuning choice, not a token length limit. A commit clears the retry threshold,
+and buffer compaction preserves it.
+
+Waiting can delay callbacks or error reporting even when a later chunk completes
+the pending token. A final chunk always allows processing, including an empty
+final chunk sent separately from the last data. Explicit rewinds without an
+input exhaustion do not introduce a retry wait.
 
 `postprocess-flex.py --fsp-rewind` also sets the guarded `YY_READ_BUF_SIZE`
 default to `INT_MAX`. Flex limits each actual read to the available space in its
@@ -581,11 +610,12 @@ default.
 
 With rewind support, libfsp supports streaming with arbitrarily small chunks:
 
-- **1-byte chunks**: Every token is split across chunks and rescanned
+- **1-byte chunks**: Split tokens are rescanned when the retry scheduler permits
 - **Any chunk size**: No minimum requirement
 - **Multi-line tokens**: Triple-quoted strings work across chunk boundaries
 - **Long tokens**: Strings, URIs and comments longer than the Flex buffer work
-- **Performance**: O(1) amortized append; partial tokens are rescanned
+- **Performance**: O(1) amortized append; large partial tokens wait for retained
+  input to double between rescans
 
 Earlier versions of this document recommended calling the lexer only when at
 least `MIN_BUFFER_FOR_LEX` bytes were buffered. That reduces how often a token

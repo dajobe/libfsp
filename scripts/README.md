@@ -208,7 +208,14 @@ source rather than written in the `.l` file. The lexer's `yyextra` must be the
 1. In the host, call `PREFIXfsp_commit()` before the first token and after every
    complete token. When the lexer returns `FSP_LEXER_NEED_MORE`, or returns 0
    while `fsp_input_would_block()` is true, call `PREFIXfsp_rewind()`, append
-   more input and call the lexer again.
+   more input and call the lexer again when `fsp_input_ready()` permits it.
+
+Check `fsp_input_ready()` after feeding a chunk and before entering the lexer
+loop, rather than between individual tokens. The generated parser helper does
+this automatically. After a rewind of at least 256 retained bytes caused by
+exhausted input, retries wait for that input to double; commits clear the wait
+and EOF always permits processing. This bounds repeated rescanning but can delay
+callbacks until more input or EOF arrives.
 
 With `--fsp-rewind`, the postprocessor changes the guarded `YY_READ_BUF_SIZE`
 default to `INT_MAX`. Flex still limits reads to available scanner buffer space,

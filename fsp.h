@@ -97,13 +97,20 @@ void fsp_buffer_commit(fsp_context *ctx, size_t unread, const fsp_lexer_state *s
 void fsp_buffer_rewind(fsp_context *ctx, fsp_lexer_state *state);
 int fsp_input_would_block(fsp_context *ctx);
 
+/* Check after feeding a chunk, before starting a lexer batch. Rewinds
+ * throttle retries of large retained input; commits clear the wait and
+ * EOF always permits processing. Do not check between individual tokens,
+ * since the lexer may still have unread input in its own buffer. */
+int fsp_input_ready(fsp_context *ctx);
+
 /**
  * FSP_LEXER_NEED_MORE:
  *
  * Value returned by a lexer when the input ran out while matching a
  * token and more chunks are expected, so the token may be incomplete.
- * The host should rewind the lexer and call it again after appending
- * more input.  Negative so that it cannot be a Bison token number.
+ * The host should rewind the lexer, append more input, and retry when
+ * fsp_input_ready() permits it. Negative so that it cannot be a Bison
+ * token number.
  */
 #define FSP_LEXER_NEED_MORE (-2)
 
@@ -129,4 +136,3 @@ void fsp_set_user_data(fsp_context *ctx, void *user_data);
 void* fsp_get_user_data(fsp_context *ctx);
 
 #endif /* FSP_H */
-

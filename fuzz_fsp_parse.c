@@ -124,6 +124,12 @@ run_parse_case(const uint8_t *data, size_t size, size_t chunk_base,
     if(fsp_parse_chunk(ctx, (const char*)p, chunk, is_end) == FSP_STATUS_NO_MEMORY)
       break;
 
+    if(!fsp_input_ready(ctx)) {
+      p += chunk;
+      remain -= chunk;
+      continue;
+    }
+
     while(1) {
       TEST_PARSER_STYPE lval;
       TEST_PARSER_LTYPE lloc;
